@@ -7,7 +7,7 @@ from app.core.config import settings
 from app.core.security import create_access_token, generate_otp, hash_otp, verify_otp_hash
 from app.domains.identity.models import OTPChallenge
 from app.domains.rider.models import Rider, RiderStatus
-from app.utils.sms import msg91_missing_fields, send_otp_msg91
+from app.utils.sms import msg91_missing_fields, msg91_channels_available, send_otp_best_effort
 
 
 def request_otp(db: Session, phone: str) -> OTPChallenge:
@@ -16,6 +16,17 @@ def request_otp(db: Session, phone: str) -> OTPChallenge:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={"code": "OTP_SMS_NOT_CONFIGURED", "missing": missing},
+        )
+
+    channels = msg91_channels_available()
+    if not channels.get("whatsapp") and not channels.get("sms"):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "OTP_CHANNELS_NOT_CONFIGURED",
+                "message": "Configure WhatsApp Flow or SMS template for OTP delivery.",
+                "channels": channels,
+            },
         )
 
     otp = generate_otp()
@@ -29,12 +40,11 @@ def request_otp(db: Session, phone: str) -> OTPChallenge:
     db.commit()
     db.refresh(challenge)
 
-    # Send SMS via MSG91 (required)
-    ok = send_otp_msg91(phone, otp)
+    ok, channel, debug = send_otp_best_effort(phone, otp)
     if not ok:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={"code": "OTP_SMS_FAILED", "message": "Could not send OTP via SMS (MSG91)."},
+            detail={"code": "OTP_SEND_FAILED", "message": "Could not deliver OTP via configured channels.", "debug": debug},
         )
 
     return challenge

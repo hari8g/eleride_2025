@@ -36,6 +36,14 @@ class Settings(BaseSettings):
     msg91_otp_template_id: str | None = None  # e.g., "120716XXXXX"
     msg91_sender_id: str | None = None       # e.g., "ELERID"
 
+    # MSG91 WhatsApp (OTP via Flow)
+    # Create a WhatsApp Flow in MSG91 that accepts a variable (default key: OTP).
+    msg91_whatsapp_flow_id: str | None = None
+    msg91_whatsapp_otp_var: str = "OTP"
+
+    # Channel order for OTP delivery attempts (comma-separated): e.g. "whatsapp,sms"
+    msg91_otp_channel_order: str = "whatsapp,sms"
+
     @field_validator("database_url", mode="before")
     @classmethod
     def _normalize_database_url(cls, v: str) -> str:

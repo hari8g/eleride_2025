@@ -19,7 +19,7 @@ from app.domains.leasing_portal.models import (
     VehicleLeaseStatus,
 )
 from app.domains.operator_portal.models import MaintenanceRecord, MaintenanceStatus, Operator, Vehicle, VehicleStatus
-from app.utils.sms import msg91_missing_fields, send_otp_msg91
+from app.utils.sms import msg91_channels_available, msg91_missing_fields, send_otp_best_effort
 
 
 def _slugify(name: str) -> str:
@@ -42,6 +42,17 @@ def request_lessor_otp(
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={"code": "OTP_SMS_NOT_CONFIGURED", "missing": missing},
+        )
+
+    channels = msg91_channels_available()
+    if not channels.get("whatsapp") and not channels.get("sms"):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "OTP_CHANNELS_NOT_CONFIGURED",
+                "message": "Configure WhatsApp Flow or SMS template for OTP delivery.",
+                "channels": channels,
+            },
         )
 
     if mode == LessorOtpChallengeMode.SIGNUP:
@@ -73,11 +84,11 @@ def request_lessor_otp(
     db.commit()
     db.refresh(ch)
 
-    ok = send_otp_msg91(phone, otp)
+    ok, channel, debug = send_otp_best_effort(phone, otp)
     if not ok:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={"code": "OTP_SMS_FAILED", "message": "Could not send OTP via SMS (MSG91)."},
+            detail={"code": "OTP_SEND_FAILED", "message": "Could not deliver OTP via configured channels.", "debug": debug},
         )
 
     return ch
