@@ -60,7 +60,7 @@ export const api = {
   health: () => http<{ ok: boolean; service: string; env: string }>("/health"),
 
   otpRequest: (phone: string) =>
-    http<{ request_id: string; expires_in_seconds: number; dev_otp?: string }>(
+    http<{ request_id: string; expires_in_seconds: number }>(
       "/auth/otp/request",
       {
         method: "POST",

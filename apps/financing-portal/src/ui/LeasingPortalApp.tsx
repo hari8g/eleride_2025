@@ -206,7 +206,6 @@ export function FinancingPortalApp() {
   const [lessorSlug, setLessorSlug] = useState<string>("eleride-leasing");
   const [otpRequestId, setOtpRequestId] = useState<string>("");
   const [otp, setOtp] = useState<string>("");
-  const [devOtp, setDevOtp] = useState<string>("");
 
   // data
   const [dash, setDash] = useState<LessorDashboard | null>(null);
@@ -314,7 +313,6 @@ export function FinancingPortalApp() {
                   lessor_slug: mode === "login" ? lessorSlug.trim() : undefined,
                 });
                 setOtpRequestId(r.request_id);
-                setDevOtp(r.dev_otp ?? "");
               })
             }
           >
@@ -327,7 +325,6 @@ export function FinancingPortalApp() {
                 <div>
                   <label>OTP</label>
                   <input value={otp} onChange={(e) => setOtp(e.target.value)} placeholder="6-digit OTP" />
-                  {devOtp ? <div className="helper">Dev OTP: {devOtp}</div> : null}
                 </div>
                 <div className="helper">
                   After verify, you’ll land in a portfolio view showing partners, leased fleet, and buyback estimates.

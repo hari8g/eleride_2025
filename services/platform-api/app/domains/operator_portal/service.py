@@ -28,6 +28,7 @@ from app.domains.operator_portal.models import (
 )
 from app.domains.supply.models import SupplyRequest
 from app.domains.rider.models import Rider
+from app.utils.sms import send_otp_msg91
 
 
 def _slugify(name: str) -> str:
@@ -44,7 +45,7 @@ def request_operator_otp(
     mode: OperatorOtpChallengeMode,
     operator_name: str | None,
     operator_slug: str | None,
-) -> tuple[OperatorOtpChallenge, str]:
+) -> OperatorOtpChallenge:
     if mode == OperatorOtpChallengeMode.SIGNUP:
         if not operator_name or len(operator_name.strip()) < 2:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="operator_name required for signup")
@@ -74,7 +75,15 @@ def request_operator_otp(
     db.add(ch)
     db.commit()
     db.refresh(ch)
-    return ch, otp
+
+    ok = send_otp_msg91(phone, otp)
+    if not ok:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "OTP_SMS_FAILED", "message": "Could not send OTP via SMS (MSG91)."},
+        )
+
+    return ch
 
 
 def _ensure_operator(db: Session, *, name: str, slug: str) -> Operator:

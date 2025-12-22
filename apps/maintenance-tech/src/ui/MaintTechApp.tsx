@@ -81,7 +81,6 @@ export function MaintTechApp() {
   const [operatorSlug, setOperatorSlug] = useState<string>(() => session?.operator_slug ?? "eleride-fleet");
   const [otpRequestId, setOtpRequestId] = useState<string>("");
   const [otp, setOtp] = useState<string>("");
-  const [devOtp, setDevOtp] = useState<string>("");
 
   // tickets
   const [tickets, setTickets] = useState<Ticket[]>([]);
@@ -273,7 +272,6 @@ export function MaintTechApp() {
                         run(async () => {
                           const r = await api.otpRequest({ phone: phoneE164, mode: "login", operator_slug: operatorSlug.trim() });
                           setOtpRequestId(r.request_id);
-                          setDevOtp(r.dev_otp ?? "");
                         })
                       }
                     >
@@ -292,7 +290,6 @@ export function MaintTechApp() {
                           inputMode="numeric"
                           autoComplete="one-time-code"
                         />
-                        {devOtp ? <div className="helper">Dev OTP: {devOtp}</div> : null}
                       </div>
 
                       <button

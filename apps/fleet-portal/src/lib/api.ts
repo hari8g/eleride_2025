@@ -112,7 +112,7 @@ export const api = {
   base: BASE,
 
   operatorOtpRequest: (payload: { phone: string; mode: "signup" | "login"; operator_name?: string; operator_slug?: string }) =>
-    http<{ request_id: string; expires_in_seconds: number; dev_otp?: string }>("/operator/auth/otp/request", {
+    http<{ request_id: string; expires_in_seconds: number }>("/operator/auth/otp/request", {
       method: "POST",
       body: JSON.stringify(payload),
     }),

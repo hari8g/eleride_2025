@@ -1,7 +1,6 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from app.core.config import settings
 from app.core.deps import get_db, require_lessor, require_lessor_roles
 from app.core.security import Principal
 from app.domains.leasing_portal.models import LessorMembershipRole, LessorOtpChallengeMode
@@ -32,15 +31,14 @@ router = APIRouter(prefix="/lessor")
 @router.post("/auth/otp/request", response_model=LessorOtpRequestOut)
 def lessor_otp_request(payload: LessorOtpRequestIn, db: Session = Depends(get_db)) -> LessorOtpRequestOut:
     mode = LessorOtpChallengeMode.SIGNUP if payload.mode == "signup" else LessorOtpChallengeMode.LOGIN
-    ch, otp = request_lessor_otp(
+    ch = request_lessor_otp(
         db,
         phone=payload.phone,
         mode=mode,
         lessor_name=payload.lessor_name,
         lessor_slug=payload.lessor_slug,
     )
-    dev_otp = otp if settings.env == "dev" else None
-    return LessorOtpRequestOut(request_id=ch.id, expires_in_seconds=settings.otp_ttl_seconds, dev_otp=dev_otp)
+    return LessorOtpRequestOut(request_id=ch.id, expires_in_seconds=settings.otp_ttl_seconds)
 
 
 @router.post("/auth/otp/verify", response_model=LessorSessionOut)

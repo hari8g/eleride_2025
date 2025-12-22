@@ -90,7 +90,6 @@ export function FleetPortalApp() {
   const [operatorSlug, setOperatorSlug] = useState<string>("eleride-fleet");
   const [otpRequestId, setOtpRequestId] = useState<string>("");
   const [otp, setOtp] = useState<string>("");
-  const [devOtp, setDevOtp] = useState<string>("");
 
   // data
   const [inbox, setInbox] = useState<InboxItem[]>([]);
@@ -338,7 +337,6 @@ export function FleetPortalApp() {
                   operator_slug: mode === "login" ? operatorSlug.trim() : undefined,
                 });
                 setOtpRequestId(r.request_id);
-                setDevOtp(r.dev_otp ?? "");
               })
             }
           >
@@ -351,7 +349,6 @@ export function FleetPortalApp() {
                 <div>
                   <label>OTP</label>
                   <input value={otp} onChange={(e) => setOtp(e.target.value)} placeholder="6-digit OTP" />
-                  {devOtp ? <div className="helper">Dev OTP: {devOtp}</div> : null}
                 </div>
                 <div className="helper">
                   After verify, you’ll land in a tenant-scoped dashboard. Role-based actions are enforced by the backend.

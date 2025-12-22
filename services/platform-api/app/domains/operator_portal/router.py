@@ -1,7 +1,6 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from app.core.config import settings
 from app.core.deps import get_db, require_operator, require_operator_roles
 from app.core.security import Principal
 from app.domains.operator_portal.models import OperatorMembershipRole, OperatorOtpChallengeMode
@@ -57,15 +56,14 @@ router = APIRouter(prefix="/operator")
 @router.post("/auth/otp/request", response_model=OperatorOtpRequestOut)
 def operator_otp_request(payload: OperatorOtpRequestIn, db: Session = Depends(get_db)) -> OperatorOtpRequestOut:
     mode = OperatorOtpChallengeMode.SIGNUP if payload.mode == "signup" else OperatorOtpChallengeMode.LOGIN
-    ch, otp = request_operator_otp(
+    ch = request_operator_otp(
         db,
         phone=payload.phone,
         mode=mode,
         operator_name=payload.operator_name,
         operator_slug=payload.operator_slug,
     )
-    dev_otp = otp if settings.env == "dev" else None
-    return OperatorOtpRequestOut(request_id=ch.id, expires_in_seconds=settings.otp_ttl_seconds, dev_otp=dev_otp)
+    return OperatorOtpRequestOut(request_id=ch.id, expires_in_seconds=settings.otp_ttl_seconds)
 
 
 @router.post("/auth/otp/verify", response_model=OperatorSessionOut)

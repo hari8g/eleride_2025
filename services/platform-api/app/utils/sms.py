@@ -1,5 +1,4 @@
 import logging
-from typing import Optional
 
 import requests
 
@@ -20,11 +19,17 @@ def send_otp_msg91(phone: str, otp: str) -> bool:
         logger.warning("MSG91 not configured; skipping SMS send")
         return False
 
+    # MSG91 expects digits; accept "+91..." input.
+    mobile = "".join(ch for ch in (phone or "").strip() if ch.isdigit())
+    if not mobile:
+        logger.warning("MSG91 SMS send skipped: invalid phone=%r", phone)
+        return False
+
     # MSG91 OTP API v5
     url = "https://api.msg91.com/api/v5/otp"
     payload = {
         "template_id": template_id,
-        "mobile": phone,
+        "mobile": mobile,
         "otp": otp,
         "sender": sender_id,
     }

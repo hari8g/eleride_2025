@@ -13,7 +13,6 @@ class LessorOtpRequestIn(BaseModel):
 class LessorOtpRequestOut(BaseModel):
     request_id: str
     expires_in_seconds: int
-    dev_otp: str | None = None
 
 
 class LessorOtpVerifyIn(BaseModel):

@@ -8,7 +8,6 @@ class OTPRequestIn(BaseModel):
 class OTPRequestOut(BaseModel):
     request_id: str
     expires_in_seconds: int
-    dev_otp: str | None = None
 
 
 class OTPVerifyIn(BaseModel):

@@ -19,6 +19,7 @@ from app.domains.leasing_portal.models import (
     VehicleLeaseStatus,
 )
 from app.domains.operator_portal.models import MaintenanceRecord, MaintenanceStatus, Operator, Vehicle, VehicleStatus
+from app.utils.sms import send_otp_msg91
 
 
 def _slugify(name: str) -> str:
@@ -35,7 +36,7 @@ def request_lessor_otp(
     mode: LessorOtpChallengeMode,
     lessor_name: str | None,
     lessor_slug: str | None,
-) -> tuple[LessorOtpChallenge, str]:
+) -> LessorOtpChallenge:
     if mode == LessorOtpChallengeMode.SIGNUP:
         if not lessor_name or len(lessor_name.strip()) < 2:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="lessor_name required for signup")
@@ -64,7 +65,15 @@ def request_lessor_otp(
     db.add(ch)
     db.commit()
     db.refresh(ch)
-    return ch, otp
+
+    ok = send_otp_msg91(phone, otp)
+    if not ok:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "OTP_SMS_FAILED", "message": "Could not send OTP via SMS (MSG91)."},
+        )
+
+    return ch
 
 
 def _ensure_lessor(db: Session, *, name: str, slug: str) -> Lessor:

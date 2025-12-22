@@ -10,7 +10,7 @@ from app.domains.rider.models import Rider, RiderStatus
 from app.utils.sms import send_otp_msg91
 
 
-def request_otp(db: Session, phone: str) -> tuple[OTPChallenge, str]:
+def request_otp(db: Session, phone: str) -> OTPChallenge:
     otp = generate_otp()
     challenge = OTPChallenge(
         phone=phone,
@@ -22,13 +22,15 @@ def request_otp(db: Session, phone: str) -> tuple[OTPChallenge, str]:
     db.commit()
     db.refresh(challenge)
 
-    # Send SMS via MSG91 (best effort)
-    try:
-        send_otp_msg91(phone, otp)
-    except Exception:
-        pass
+    # Send SMS via MSG91 (required)
+    ok = send_otp_msg91(phone, otp)
+    if not ok:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "OTP_SMS_FAILED", "message": "Could not send OTP via SMS (MSG91)."},
+        )
 
-    return challenge, otp
+    return challenge
 
 
 def verify_otp(db: Session, request_id: str, otp: str) -> str:

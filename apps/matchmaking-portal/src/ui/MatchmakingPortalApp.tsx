@@ -28,7 +28,6 @@ export function MatchmakingPortalApp() {
   const [phone, setPhone] = useState<string>("+919999000010");
   const [otpRequestId, setOtpRequestId] = useState<string>("");
   const [otp, setOtp] = useState<string>("");
-  const [devOtp, setDevOtp] = useState<string>("");
 
   // inputs
   const [riderLat, setRiderLat] = useState<string>("18.5204");
@@ -141,7 +140,6 @@ export function MatchmakingPortalApp() {
                 run(async () => {
                   const r = await api.otpRequest(phone.trim());
                   setOtpRequestId(r.request_id);
-                  setDevOtp(r.dev_otp ?? "");
                 })
               }
             >
@@ -152,7 +150,6 @@ export function MatchmakingPortalApp() {
                 <div>
                   <label>OTP</label>
                   <input value={otp} onChange={(e) => setOtp(e.target.value)} placeholder="6-digit OTP" />
-                  {devOtp ? <div className="helper">Dev OTP: {devOtp}</div> : null}
                 </div>
                 <button
                   className="btn btnPrimary"
