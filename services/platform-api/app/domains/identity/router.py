@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.deps import get_db
 from app.domains.identity.schemas import OTPRequestIn, OTPRequestOut, OTPVerifyIn, OTPVerifyOut
 from app.domains.identity.service import request_otp, verify_otp

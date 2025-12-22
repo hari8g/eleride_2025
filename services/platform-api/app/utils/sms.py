@@ -11,8 +11,6 @@ def msg91_missing_fields() -> list[str]:
     missing: list[str] = []
     if not settings.msg91_api_key:
         missing.append("MSG91_API_KEY")
-    if not settings.msg91_otp_template_id:
-        missing.append("MSG91_OTP_TEMPLATE_ID")
     if not settings.msg91_sender_id:
         missing.append("MSG91_SENDER_ID")
     return missing
@@ -39,12 +37,12 @@ def send_otp_msg91(phone: str, otp: str) -> bool:
 
     # MSG91 OTP API v5
     url = "https://api.msg91.com/api/v5/otp"
-    payload = {
-        "template_id": template_id,
-        "mobile": mobile,
-        "otp": otp,
-        "sender": sender_id,
-    }
+    payload = {"mobile": mobile, "otp": otp, "sender": sender_id}
+    # DLT note: template_id is often required for India delivery; allow it to be omitted temporarily.
+    if template_id:
+        payload["template_id"] = template_id
+    else:
+        logger.warning("MSG91_OTP_TEMPLATE_ID is empty; attempting send without template_id (delivery may be blocked by DLT).")
     headers = {
         "accept": "application/json",
         "content-type": "application/json",
