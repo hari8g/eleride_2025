@@ -63,6 +63,12 @@ a {
   backdrop-filter: blur(10px);
 }
 
+.topbarRight {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .brand {
   display: flex;
   align-items: center;
@@ -171,6 +177,12 @@ textarea {
   font-weight: 700;
   font-size: 14px;
   cursor: pointer;
+}
+
+.btnSmall {
+  padding: 8px 10px;
+  font-size: 13px;
+  border-radius: 10px;
 }
 
 .btnPrimary {

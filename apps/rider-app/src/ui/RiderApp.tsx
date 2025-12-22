@@ -379,12 +379,14 @@ export function RiderApp() {
     setSession(null);
     setStatus(null);
     setDemand(null);
+    setDemandPolicy(null);
     setSelectedLaneId("");
     setConnectResult(null);
     setOtpRequestId("");
     setOtp("");
-    setDevOtp("");
     setGeoReady(false);
+    setTrackingReqId("");
+    setSupplyStatus(null);
     setStep("auth");
   }
 
@@ -395,7 +397,14 @@ export function RiderApp() {
           <div className="brand">
             <img className="brandLogo" src={logoPng} alt="Eleride" />
           </div>
-          <div className="chip">{signedInBadge ?? (health ? `API: ${health.env}` : "Offline?")}</div>
+          <div className="topbarRight">
+            <div className="chip">{signedInBadge ?? (health ? `API: ${health.env}` : "Offline?")}</div>
+            {session?.token ? (
+              <button type="button" className="btn btnSecondary btnSmall" onClick={signOut}>
+                Sign out
+              </button>
+            ) : null}
+          </div>
         </div>
 
         <div className="content">
