@@ -7,10 +7,17 @@ from app.core.config import settings
 from app.core.security import create_access_token, generate_otp, hash_otp, verify_otp_hash
 from app.domains.identity.models import OTPChallenge
 from app.domains.rider.models import Rider, RiderStatus
-from app.utils.sms import send_otp_msg91
+from app.utils.sms import msg91_missing_fields, send_otp_msg91
 
 
 def request_otp(db: Session, phone: str) -> OTPChallenge:
+    missing = msg91_missing_fields()
+    if missing:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "OTP_SMS_NOT_CONFIGURED", "missing": missing},
+        )
+
     otp = generate_otp()
     challenge = OTPChallenge(
         phone=phone,

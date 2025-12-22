@@ -19,7 +19,7 @@ from app.domains.leasing_portal.models import (
     VehicleLeaseStatus,
 )
 from app.domains.operator_portal.models import MaintenanceRecord, MaintenanceStatus, Operator, Vehicle, VehicleStatus
-from app.utils.sms import send_otp_msg91
+from app.utils.sms import msg91_missing_fields, send_otp_msg91
 
 
 def _slugify(name: str) -> str:
@@ -37,6 +37,13 @@ def request_lessor_otp(
     lessor_name: str | None,
     lessor_slug: str | None,
 ) -> LessorOtpChallenge:
+    missing = msg91_missing_fields()
+    if missing:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "OTP_SMS_NOT_CONFIGURED", "missing": missing},
+        )
+
     if mode == LessorOtpChallengeMode.SIGNUP:
         if not lessor_name or len(lessor_name.strip()) < 2:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="lessor_name required for signup")

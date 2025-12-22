@@ -7,16 +7,28 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 
+def msg91_missing_fields() -> list[str]:
+    missing: list[str] = []
+    if not settings.msg91_api_key:
+        missing.append("MSG91_API_KEY")
+    if not settings.msg91_otp_template_id:
+        missing.append("MSG91_OTP_TEMPLATE_ID")
+    if not settings.msg91_sender_id:
+        missing.append("MSG91_SENDER_ID")
+    return missing
+
+
 def send_otp_msg91(phone: str, otp: str) -> bool:
     """
     Fire-and-forget OTP SMS via MSG91.
     Returns True if the request was accepted by MSG91, False otherwise.
     """
+    missing = msg91_missing_fields()
     api_key = settings.msg91_api_key
     template_id = settings.msg91_otp_template_id
     sender_id = settings.msg91_sender_id
-    if not api_key or not template_id or not sender_id:
-        logger.warning("MSG91 not configured; skipping SMS send")
+    if missing:
+        logger.warning("MSG91 not configured; missing=%s", ",".join(missing))
         return False
 
     # MSG91 expects digits; accept "+91..." input.
