@@ -92,7 +92,7 @@ export const api = {
   base: BASE,
 
   otpRequest: (payload: { phone: string; mode: "signup" | "login"; lessor_name?: string; lessor_slug?: string }) =>
-    http<{ request_id: string; expires_in_seconds: number }>("/lessor/auth/otp/request", {
+    http<{ request_id: string; expires_in_seconds: number; dev_otp?: string }>("/lessor/auth/otp/request", {
       method: "POST",
       body: JSON.stringify(payload),
     }),

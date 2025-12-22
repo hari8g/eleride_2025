@@ -130,6 +130,7 @@ export function RiderApp() {
   const phoneE164 = useMemo(() => buildE164(countryCode, phoneDigits), [countryCode, phoneDigits]);
   const [otpRequestId, setOtpRequestId] = useState<string>("");
   const [otp, setOtp] = useState<string>("");
+  const [devOtp, setDevOtp] = useState<string>("");
 
   // Profile
   const [profile, setProfile] = useState({
@@ -340,6 +341,7 @@ export function RiderApp() {
                         run(async () => {
                           const r = await api.otpRequest(phoneE164);
                           setOtpRequestId(r.request_id);
+                          setDevOtp((r as any).dev_otp ?? "");
                         })
                       }
                     >
@@ -358,6 +360,7 @@ export function RiderApp() {
                           inputMode="numeric"
                           autoComplete="one-time-code"
                         />
+                        {devOtp ? <div className="helper">Dev OTP: {devOtp}</div> : null}
                       </div>
 
                       <button

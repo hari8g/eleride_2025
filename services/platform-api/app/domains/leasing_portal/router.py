@@ -38,7 +38,8 @@ def lessor_otp_request(payload: LessorOtpRequestIn, db: Session = Depends(get_db
         lessor_name=payload.lessor_name,
         lessor_slug=payload.lessor_slug,
     )
-    return LessorOtpRequestOut(request_id=ch.id, expires_in_seconds=settings.otp_ttl_seconds)
+    dev_otp = getattr(ch, "_dev_otp", None) if settings.env == "dev" else None
+    return LessorOtpRequestOut(request_id=ch.id, expires_in_seconds=settings.otp_ttl_seconds, dev_otp=dev_otp)
 
 
 @router.post("/auth/otp/verify", response_model=LessorSessionOut)

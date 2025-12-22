@@ -46,23 +46,24 @@ def request_operator_otp(
     operator_name: str | None,
     operator_slug: str | None,
 ) -> OperatorOtpChallenge:
-    missing = msg91_missing_fields()
-    if missing:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={"code": "OTP_SMS_NOT_CONFIGURED", "missing": missing},
-        )
+    if settings.env != "dev":
+        missing = msg91_missing_fields()
+        if missing:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={"code": "OTP_SMS_NOT_CONFIGURED", "missing": missing},
+            )
 
-    channels = msg91_channels_available()
-    if not channels.get("whatsapp") and not channels.get("sms"):
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={
-                "code": "OTP_CHANNELS_NOT_CONFIGURED",
-                "message": "Configure WhatsApp Flow or SMS template for OTP delivery.",
-                "channels": channels,
-            },
-        )
+        channels = msg91_channels_available()
+        if not channels.get("whatsapp") and not channels.get("sms"):
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={
+                    "code": "OTP_CHANNELS_NOT_CONFIGURED",
+                    "message": "Configure WhatsApp Flow or SMS template for OTP delivery.",
+                    "channels": channels,
+                },
+            )
 
     if mode == OperatorOtpChallengeMode.SIGNUP:
         if not operator_name or len(operator_name.strip()) < 2:
@@ -95,12 +96,14 @@ def request_operator_otp(
     db.refresh(ch)
 
     ok, channel, debug = send_otp_best_effort(phone, otp)
-    if not ok:
+    if not ok and settings.env != "dev":
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={"code": "OTP_SEND_FAILED", "message": "Could not deliver OTP via configured channels.", "debug": debug},
         )
 
+    # Attach OTP for dev router response (not persisted).
+    setattr(ch, "_dev_otp", otp)
     return ch
 
 

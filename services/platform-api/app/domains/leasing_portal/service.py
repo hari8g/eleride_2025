@@ -37,23 +37,24 @@ def request_lessor_otp(
     lessor_name: str | None,
     lessor_slug: str | None,
 ) -> LessorOtpChallenge:
-    missing = msg91_missing_fields()
-    if missing:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={"code": "OTP_SMS_NOT_CONFIGURED", "missing": missing},
-        )
+    if settings.env != "dev":
+        missing = msg91_missing_fields()
+        if missing:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={"code": "OTP_SMS_NOT_CONFIGURED", "missing": missing},
+            )
 
-    channels = msg91_channels_available()
-    if not channels.get("whatsapp") and not channels.get("sms"):
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={
-                "code": "OTP_CHANNELS_NOT_CONFIGURED",
-                "message": "Configure WhatsApp Flow or SMS template for OTP delivery.",
-                "channels": channels,
-            },
-        )
+        channels = msg91_channels_available()
+        if not channels.get("whatsapp") and not channels.get("sms"):
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={
+                    "code": "OTP_CHANNELS_NOT_CONFIGURED",
+                    "message": "Configure WhatsApp Flow or SMS template for OTP delivery.",
+                    "channels": channels,
+                },
+            )
 
     if mode == LessorOtpChallengeMode.SIGNUP:
         if not lessor_name or len(lessor_name.strip()) < 2:
@@ -85,12 +86,13 @@ def request_lessor_otp(
     db.refresh(ch)
 
     ok, channel, debug = send_otp_best_effort(phone, otp)
-    if not ok:
+    if not ok and settings.env != "dev":
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={"code": "OTP_SEND_FAILED", "message": "Could not deliver OTP via configured channels.", "debug": debug},
         )
 
+    setattr(ch, "_dev_otp", otp)
     return ch
 
 

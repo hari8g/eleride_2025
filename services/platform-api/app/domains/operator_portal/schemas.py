@@ -18,6 +18,7 @@ class OperatorOtpRequestIn(BaseModel):
 class OperatorOtpRequestOut(BaseModel):
     request_id: str
     expires_in_seconds: int
+    dev_otp: str | None = None
 
 
 class OperatorOtpVerifyIn(BaseModel):

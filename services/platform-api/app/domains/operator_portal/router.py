@@ -63,7 +63,8 @@ def operator_otp_request(payload: OperatorOtpRequestIn, db: Session = Depends(ge
         operator_name=payload.operator_name,
         operator_slug=payload.operator_slug,
     )
-    return OperatorOtpRequestOut(request_id=ch.id, expires_in_seconds=settings.otp_ttl_seconds)
+    dev_otp = getattr(ch, "_dev_otp", None) if settings.env == "dev" else None
+    return OperatorOtpRequestOut(request_id=ch.id, expires_in_seconds=settings.otp_ttl_seconds, dev_otp=dev_otp)
 
 
 @router.post("/auth/otp/verify", response_model=OperatorSessionOut)
