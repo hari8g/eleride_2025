@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.deps import get_db, require_operator, require_operator_roles
 from app.core.security import Principal
 from app.domains.operator_portal.models import OperatorMembershipRole, OperatorOtpChallengeMode
