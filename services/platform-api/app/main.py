@@ -1,4 +1,6 @@
 from fastapi import FastAPI
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
 from app.core.config import settings
@@ -17,6 +19,18 @@ from app.domains.matchmaking.router import router as matchmaking_router
 
 
 app = FastAPI(title=settings.app_name)
+
+
+@app.exception_handler(RequestValidationError)
+async def _validation_exception_handler(request, exc: RequestValidationError):
+    # Helpful for debugging 422s in dev. Do not log full bodies in prod.
+    if settings.env == "dev":
+        try:
+            body = await request.body()
+        except Exception:
+            body = b""
+        print(f"[422] path={request.url.path} errors={exc.errors()} body={body[:500]!r}")
+    return JSONResponse(status_code=422, content={"detail": exc.errors()})
 
 # Dev CORS so a local frontend can call the API from the browser.
 origins = [o.strip() for o in settings.cors_allow_origins.split(",") if o.strip()]
