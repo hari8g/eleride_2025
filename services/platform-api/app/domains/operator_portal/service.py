@@ -79,7 +79,14 @@ def request_operator_otp(
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="operator_slug required for login")
         op = db.query(Operator).filter(Operator.slug == slug).one_or_none()
         if not op:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown operator")
+            # After DB resets in dev, operators may not exist yet. Allow bootstrapping by slug.
+            if settings.env == "dev":
+                op = Operator(name=(operator_name or slug).strip() or "Eleride Fleet", slug=slug)
+                db.add(op)
+                db.commit()
+                db.refresh(op)
+            else:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown operator")
 
     otp = generate_otp()
     ch = OperatorOtpChallenge(
@@ -172,14 +179,22 @@ def verify_operator_otp(db: Session, *, request_id: str, otp: str) -> dict:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown operator")
         user = db.query(OperatorUser).filter(OperatorUser.phone == ch.phone).one_or_none()
         if not user:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No operator user for this phone")
+            # Dev convenience: after DB wipes, allow first login to bootstrap the operator user.
+            if settings.env == "dev":
+                user = _ensure_operator_user(db, phone=ch.phone)
+            else:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No operator user for this phone")
         membership = (
             db.query(OperatorMembership)
             .filter(OperatorMembership.operator_id == op.slug, OperatorMembership.user_id == user.id)
             .one_or_none()
         )
         if not membership:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User not a member of this operator")
+            # Dev convenience: bootstrap membership so portals can be used immediately after resets.
+            if settings.env == "dev":
+                membership = _ensure_membership(db, operator_id=op.slug, user_id=user.id, role=OperatorMembershipRole.OWNER)
+            else:
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User not a member of this operator")
 
     token = create_access_token(
         sub=user.id,
