@@ -25,6 +25,13 @@ env.local
 .env
 .env.*
 
+# Terraform
+**/.terraform/
+**/.terraform.lock.hcl
+**/*.tfstate
+**/*.tfstate.*
+**/terraform.tfvars
+
 # Misc
 *.log
 
