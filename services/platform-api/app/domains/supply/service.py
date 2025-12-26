@@ -1,7 +1,10 @@
 import json
 
+from fastapi import HTTPException, status
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
+from app.domains.operator_portal.models import OperatorInboxState, OperatorRequestInbox
 from app.domains.supply.models import SupplyRequest, SupplyRequestStatus
 from app.domains.supply_match.service import pick_operator_for_lane
 from app.domains.matchmaking.service import recommend
@@ -18,6 +21,33 @@ def create_supply_request(
     rider_lon: float | None = None,
     operator_id: str | None = None,
 ) -> SupplyRequest:
+    # Enforce: one active onboarding per rider/phone at a time.
+    # Active = not rejected AND pickup not verified.
+    existing: SupplyRequest | None = (
+        db.query(SupplyRequest)
+        .outerjoin(OperatorRequestInbox, OperatorRequestInbox.supply_request_id == SupplyRequest.id)
+        .filter(
+            SupplyRequest.rider_id == rider_id,
+            SupplyRequest.pickup_verified_at.is_(None),
+            SupplyRequest.status != SupplyRequestStatus.REJECTED,
+            or_(
+                OperatorRequestInbox.state.is_(None),
+                OperatorRequestInbox.state != OperatorInboxState.REJECTED,
+            ),
+        )
+        .order_by(SupplyRequest.created_at.desc())
+        .first()
+    )
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "ACTIVE_REQUEST_EXISTS",
+                "message": "An onboarding request is already in progress for this phone number.",
+                "request_id": existing.id,
+            },
+        )
+
     req = SupplyRequest(
         rider_id=rider_id,
         lane_id=lane_id,

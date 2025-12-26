@@ -7,12 +7,14 @@ from sqlalchemy.orm import Session
 from app.core.deps import get_db, require_rider
 from app.core.security import Principal
 from app.domains.operator_portal.models import Operator, OperatorInboxState, OperatorRequestInbox
+from app.domains.operator_portal.models import Vehicle
 from app.domains.supply.models import SupplyRequest, SupplyRequestStatus
 from app.domains.supply.schemas import RiderSupplyStatusOut, SupplyRequestCreateIn, SupplyRequestCreateOut
 from app.domains.supply.service import create_supply_request
 from app.domains.supply_match.service import pick_operator_for_lane
 from app.domains.rider.service import get_rider_by_phone
 from app.domains.rider.models import RiderStatus
+from app.utils.qr import build_pickup_qr_payload, pickup_qr_code, qr_png_base64
 
 
 router = APIRouter(prefix="/supply")
@@ -101,12 +103,43 @@ def rider_supply_status(
     # Map to a product-style stage for the rider.
     if req.status == SupplyRequestStatus.REJECTED or inbox_state == OperatorInboxState.REJECTED.value:
         stage = {"code": "rejected", "label": "Rejected", "detail": inbox_note or "The operator couldn’t accept your request."}
+    elif req.pickup_verified_at is not None:
+        stage = {"code": "completed", "label": "Pickup verified", "detail": "Pickup verified at the hub. You’re good to go."}
     elif inbox_state == OperatorInboxState.ONBOARDED.value:
         stage = {"code": "approved", "label": "Approved", "detail": inbox_note or "Approved. Please proceed to pickup/onboarding."}
     elif inbox_state == OperatorInboxState.CONTACTED.value:
         stage = {"code": "verification", "label": "Verification in progress", "detail": inbox_note or "The operator is verifying your details."}
     else:
         stage = {"code": "sent", "label": "Request sent", "detail": "Your request has been sent to the operator."}
+
+    # Enrich with pickup hub coordinates (demo mapping) and vehicle registration (if assigned).
+    pickup_lat = None
+    pickup_lon = None
+    if req.operator_id:
+        try:
+            rec = pick_operator_for_lane(lane_id=req.lane_id, operator_id=req.operator_id)
+            pickup_lat = rec.pickup_lat
+            pickup_lon = rec.pickup_lon
+        except Exception:
+            pickup_lat = None
+            pickup_lon = None
+
+    vehicle_reg = None
+    if req.matched_vehicle_id:
+        v = db.get(Vehicle, req.matched_vehicle_id)
+        if v and getattr(v, "operator_id", None) == (req.operator_id or ""):
+            vehicle_reg = v.registration_number
+
+    pickup_qr_png = None
+    pickup_code = None
+    if stage.get("code") == "approved":
+        payload = build_pickup_qr_payload(
+            supply_request_id=req.id,
+            operator_id=req.operator_id,
+            vehicle_reg=vehicle_reg,
+        )
+        pickup_qr_png = qr_png_base64(payload)
+        pickup_code = pickup_qr_code(supply_request_id=req.id, operator_id=req.operator_id, vehicle_reg=vehicle_reg)
 
     return RiderSupplyStatusOut(
         request_id=req.id,
@@ -115,9 +148,15 @@ def rider_supply_status(
         operator_id=req.operator_id,
         operator_name=op_name,
         pickup_location=req.pickup_location,
+        pickup_lat=pickup_lat,
+        pickup_lon=pickup_lon,
         matched_vehicle_id=req.matched_vehicle_id,
+        matched_vehicle_registration_number=vehicle_reg,
         matched_score=req.matched_score,
         matched_reasons=json.loads(req.matched_reasons) if req.matched_reasons else None,
+        pickup_qr_png_base64=pickup_qr_png,
+        pickup_qr_code=pickup_code,
+        pickup_verified_at=(req.pickup_verified_at.isoformat() if req.pickup_verified_at else None),
         inbox_state=inbox_state,
         inbox_note=inbox_note,
         inbox_updated_at=inbox_updated_at,

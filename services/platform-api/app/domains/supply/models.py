@@ -31,6 +31,12 @@ class SupplyRequest(Base):
     matched_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     matched_reasons: Mapped[str | None] = mapped_column(String, nullable=True)  # MVP: JSON string
 
+    # Pickup flow:
+    # - When ONBOARDED, rider receives pickup QR.
+    # - Workflow is considered "closed" only after the pickup QR is verified by the fleet portal.
+    pickup_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    pickup_verified_by_user_id: Mapped[str | None] = mapped_column(String, nullable=True)
+
     status: Mapped[SupplyRequestStatus] = mapped_column(Enum(SupplyRequestStatus), default=SupplyRequestStatus.CREATED)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 

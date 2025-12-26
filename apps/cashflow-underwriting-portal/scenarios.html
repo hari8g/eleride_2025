@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Portfolio Scenarios – Cashflow Underwriting Engine</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <img class="brand-logo" src="assets/eleride-logo.png" alt="eleRide" />
+        <div>
+          <div class="title">Cashflow Underwriting Engine</div>
+          <div class="subtitle">Scenario analysis: cost economics & P&L (present vs future)</div>
+        </div>
+      </div>
+      <nav class="nav">
+        <a class="nav-link" href="index.html">Dashboard</a>
+        <a class="nav-link active" href="scenarios.html">Scenarios</a>
+        <a class="nav-link" href="payslips.html">Payslips</a>
+      </nav>
+      <div class="meta">
+        <div id="generatedAt" class="pill">Loading…</div>
+        <button id="reloadBtn" class="btn">Reload</button>
+      </div>
+    </header>
+
+    <main class="container">
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Scenario</h2>
+          <div class="tabs" role="tablist" aria-label="Scenario mode tabs">
+            <button class="tab active" data-mode="salary_advance_lender" role="tab">Lender economics</button>
+            <button class="tab" data-mode="3pl_operator" role="tab">3PL economics</button>
+          </div>
+          <div class="tabs" role="tablist" aria-label="Scenario view tabs">
+            <button class="tab active" data-view="scenario" role="tab">Scenario</button>
+            <button class="tab" data-view="sensitivity" role="tab">Sensitivity</button>
+          </div>
+        </div>
+
+        <div id="scenarioBlock">
+          <div class="filters" style="grid-template-columns: repeat(5, minmax(0, 1fr));">
+          <div class="field">
+            <label for="takeRate">Take-rate (% of approved riders drawing / month)</label>
+            <input id="takeRate" type="number" min="0" max="100" step="1" value="40" />
+          </div>
+
+          <div class="field">
+            <label for="useActualApproval">Approval rate (present, %)</label>
+            <div style="display:flex; gap:10px; align-items:center;">
+              <input id="approvalOverride" type="number" min="0" max="100" step="1" value="27" style="flex:1;" />
+              <label class="muted" style="display:flex; gap:6px; align-items:center; margin:0;">
+                <input id="useActualApproval" type="checkbox" checked />
+                Auto
+              </label>
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="utilization">Utilization (% of limit used per draw)</label>
+            <input id="utilization" type="number" min="0" max="100" step="1" value="100" />
+          </div>
+
+          <div class="field">
+            <label for="termWeeks">Term (weeks)</label>
+            <input id="termWeeks" type="number" min="1" max="24" step="1" value="4" />
+          </div>
+
+          <div class="field">
+            <label for="apr">APR (lender pricing, %)</label>
+            <input id="apr" type="number" min="0" max="100" step="0.5" value="40" />
+          </div>
+
+          <div class="field">
+            <label for="cof">Cost of funds (COF, %)</label>
+            <input id="cof" type="number" min="0" max="100" step="0.5" value="14" />
+          </div>
+          </div>
+
+          <div class="filters" style="grid-template-columns: repeat(5, minmax(0, 1fr)); border-top: 1px solid var(--border);">
+          <div class="field">
+            <label for="pd">PD over term (%)</label>
+            <input id="pd" type="number" min="0" max="100" step="0.1" value="2" />
+          </div>
+
+          <div class="field">
+            <label for="lgd">LGD (%)</label>
+            <input id="lgd" type="number" min="0" max="100" step="1" value="35" />
+          </div>
+
+          <div class="field">
+            <label for="opex">OpEx per disbursal (₹)</label>
+            <input id="opex" type="number" min="0" step="10" value="40" />
+          </div>
+
+          <div class="field">
+            <label for="refFee">3PL referral fee / advance (₹)</label>
+            <input id="refFee" type="number" min="0" step="10" value="125" />
+          </div>
+
+          <div class="field">
+            <label for="revShare">3PL interest rev-share (%)</label>
+            <input id="revShare" type="number" min="0" max="100" step="1" value="20" />
+          </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="presentPanel" class="panel">
+        <div class="panel-head">
+          <h2>Present stage (from current portfolio)</h2>
+          <div class="muted" id="presentMeta"></div>
+        </div>
+        <div id="presentCards" class="cards"></div>
+      </section>
+
+      <section id="futurePanel" class="panel">
+        <div class="panel-head">
+          <h2>Future stage (scale assumptions)</h2>
+          <div class="muted">Linear scaling model for planning (you can refine later).</div>
+        </div>
+        <div class="filters" style="grid-template-columns: repeat(4, minmax(0, 1fr));">
+          <div class="field">
+            <label for="futureRiders">Starting riders (Month 1)</label>
+            <input id="futureRiders" type="number" min="0" step="100" value="1000" />
+          </div>
+          <div class="field">
+            <label for="futureApproval">Approval rate (%)</label>
+            <input id="futureApproval" type="number" min="0" max="100" step="1" value="27" />
+          </div>
+          <div class="field">
+            <label for="months">Projection months</label>
+            <input id="months" type="number" min="1" max="36" step="1" value="12" />
+          </div>
+          <div class="field">
+            <label for="monthlyGrowth">Monthly rider growth (%)</label>
+            <input id="monthlyGrowth" type="number" min="0" max="100" step="1" value="5" />
+          </div>
+        </div>
+        <div id="futureCards" class="cards"></div>
+      </section>
+
+      <section id="projectionPanel" class="panel">
+        <div class="panel-head">
+          <h2>Projection table</h2>
+          <div class="muted">Monthly view: disbursal, revenue, costs, expected loss, net P&L.</div>
+        </div>
+        <div class="table-wrap">
+          <table class="table" style="min-width: 900px;">
+            <thead>
+              <tr>
+                <th>Month</th>
+                <th class="num">Riders</th>
+                <th class="num">Approved</th>
+                <th class="num">Advances</th>
+                <th class="num">Disbursed (₹)</th>
+                <th class="num">WC freed / week (₹)</th>
+                <th class="num">Revenue (₹)</th>
+                <th class="num">COF (₹)</th>
+                <th class="num">EL (₹)</th>
+                <th class="num">OpEx (₹)</th>
+                <th class="num">Net P&L (₹)</th>
+              </tr>
+            </thead>
+            <tbody id="projBody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="sensitivityPanel" class="panel hidden">
+        <div class="panel-head">
+          <h2>Sensitivity</h2>
+          <div class="muted">One-at-a-time (OAT) sensitivity: change one input, keep others fixed.</div>
+        </div>
+        <div class="filters" style="grid-template-columns: 2fr 1fr 1fr; align-items: end;">
+          <div class="field">
+            <label>How to read this</label>
+            <div class="muted">
+              - Baseline (top chips) uses your current inputs.<br />
+              - Each row shows how changing one input to Low/High shifts outcomes (Δ).<br />
+              - Interactions between inputs are not modeled (use as directional guidance).
+            </div>
+          </div>
+          <div class="field">
+            <label for="sensSort">Sort by</label>
+            <select id="sensSort">
+              <option value="future_abs" selected>Future Net P&L impact (abs)</option>
+              <option value="present_abs">Present Net P&L impact (abs)</option>
+              <option value="wc_abs">WC / week impact (abs)</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Baseline (chips)</label>
+            <div id="sensChips" class="chips"></div>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table class="table" style="min-width: 1100px;">
+            <thead>
+              <tr>
+                <th>Variable</th>
+                <th class="num">Low</th>
+                <th class="num">Base</th>
+                <th class="num">High</th>
+                <th class="num">Δ Present P&L (Low)</th>
+                <th class="num">Δ Present P&L (High)</th>
+                <th class="num">Δ Future P&L (Low)</th>
+                <th class="num">Δ Future P&L (High)</th>
+                <th class="num">Δ WC / week (Low)</th>
+                <th class="num">Δ WC / week (High)</th>
+              </tr>
+            </thead>
+            <tbody id="sensBody"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <script src="scenarios.js"></script>
+  </body>
+</html>
+
+

@@ -58,6 +58,30 @@ variable "platform_api_env" {
   default     = "prod"
 }
 
+variable "otp_dev_mode" {
+  description = "If true, enable OTP dev mode in platform-api even when ENV=prod (returns dev_otp; no SMS required)."
+  type        = bool
+  default     = false
+}
+
+variable "root_domain" {
+  description = "Root domain to use for custom domains (e.g., eleride.co.in)."
+  type        = string
+  default     = ""
+}
+
+variable "enable_custom_domains" {
+  description = "If true, attach custom domains (aliases) to CloudFront and require a validated ACM cert. Use false for step 1 (request cert + print DNS records)."
+  type        = bool
+  default     = false
+}
+
+variable "manage_route53" {
+  description = "If true, Terraform manages Route53 hosted zone + records for root_domain. If false (e.g., GoDaddy DNS), Terraform will not create Route53 resources."
+  type        = bool
+  default     = false
+}
+
 variable "jwt_secret" {
   description = "JWT secret for platform-api (set via tfvars; do not hardcode)."
   type        = string
@@ -68,6 +92,13 @@ variable "cors_allow_origins" {
   description = "Comma-separated origins for CORS."
   type        = string
   default     = ""
+}
+
+variable "cashflow_basic_auth_password" {
+  description = "Basic auth password for cashflow underwriting portal (MVP restriction)."
+  type        = string
+  default     = ""
+  sensitive   = true
 }
 
 variable "msg91_api_key" {

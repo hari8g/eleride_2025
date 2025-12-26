@@ -131,9 +131,16 @@ export const api = {
       operator_id?: string | null;
       operator_name?: string | null;
       pickup_location?: string | null;
+      pickup_lat?: number | null;
+      pickup_lon?: number | null;
       inbox_state: string;
       inbox_note?: string | null;
       inbox_updated_at?: string | null;
+      matched_vehicle_id?: string | null;
+      matched_vehicle_registration_number?: string | null;
+      pickup_qr_png_base64?: string | null;
+      pickup_qr_code?: string | null;
+      pickup_verified_at?: string | null;
       stage: { code: string; label: string; detail?: string | null };
     }>(`/supply/status${request_id ? `?request_id=${encodeURIComponent(request_id)}` : ""}`, { token }),
 };

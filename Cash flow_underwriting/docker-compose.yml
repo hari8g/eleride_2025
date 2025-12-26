@@ -1,0 +1,35 @@
+services:
+  cashflow-underwriting-portal:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8082:8080"
+    environment:
+      # inside container, rebuilds dashboard.json from these folders
+      - TZ=Asia/Kolkata
+    volumes:
+      # Optional: mount live folders so the portal reflects updated outputs without rebuilding the image.
+      - ./Data:/app/Data:ro
+      - ./outputs:/app/outputs:ro
+      - ./outputs_underwriting:/app/outputs_underwriting:ro
+      - ./frontend:/app/frontend
+    networks:
+      - portal_net
+
+  # Example: connect this portal to another folder/service as a separate portal.
+  # Uncomment and point build.context to your other repo/folder.
+  #
+  # other-portal:
+  #   build:
+  #     context: ../another-portal
+  #   ports:
+  #     - "8083:8080"
+  #   networks:
+  #     - portal_net
+
+networks:
+  portal_net:
+    driver: bridge
+
+

@@ -33,8 +33,11 @@ function buildOsmEmbed(lat: number, lon: number) {
   return `https://www.openstreetmap.org/export/embed.html?bbox=${left}%2C${bottom}%2C${right}%2C${top}&layer=mapnik&marker=${marker}`;
 }
 
-function buildOsmEmbedBBox(b: { left: number; bottom: number; right: number; top: number }) {
-  return `https://www.openstreetmap.org/export/embed.html?bbox=${b.left}%2C${b.bottom}%2C${b.right}%2C${b.top}&layer=mapnik`;
+function buildOsmEmbedBBox(b: { left: number; bottom: number; right: number; top: number }, marker?: { lat: number; lon: number } | null) {
+  const base = `https://www.openstreetmap.org/export/embed.html?bbox=${b.left}%2C${b.bottom}%2C${b.right}%2C${b.top}&layer=mapnik`;
+  if (!marker) return base;
+  const m = `${encodeURIComponent(marker.lat)},${encodeURIComponent(marker.lon)}`;
+  return `${base}&marker=${m}`;
 }
 
 function fmtDt(s: string | null | undefined) {
@@ -91,6 +94,7 @@ export function FleetPortalApp() {
   const [otpRequestId, setOtpRequestId] = useState<string>("");
   const [otp, setOtp] = useState<string>("");
   const [devOtp, setDevOtp] = useState<string>("");
+  const [pickupCode, setPickupCode] = useState<string>("");
 
   // data
   const [inbox, setInbox] = useState<InboxItem[]>([]);
@@ -106,6 +110,9 @@ export function FleetPortalApp() {
   const [maintHighlightCount, setMaintHighlightCount] = useState(0);
   const [maintFeed, setMaintFeed] = useState<MaintenanceFeedItem[]>([]);
   const [maintFeedTotalOpen, setMaintFeedTotalOpen] = useState<number>(0);
+  const [showAddVehicleForm, setShowAddVehicleForm] = useState(false);
+  const [newDeviceId, setNewDeviceId] = useState("");
+  const [newDeviceProvider, setNewDeviceProvider] = useState("");
 
   const LS_INBOX_LAST_SEEN = useMemo(() => `eleride.fleet_portal.inbox.last_seen.${operatorSlug}`, [operatorSlug]);
   const LS_MAINT_LAST_SEEN = useMemo(() => `eleride.fleet_portal.maint.last_seen.${operatorSlug}`, [operatorSlug]);
@@ -188,6 +195,7 @@ export function FleetPortalApp() {
     setOtpRequestId("");
     setOtp("");
     setDevOtp("");
+    setPickupCode("");
   }
 
   async function refreshInbox() {
@@ -241,6 +249,26 @@ export function FleetPortalApp() {
 
   useEffect(() => {
     if (!sess?.token) return;
+    let cancelled = false;
+
+    // If a token was saved from another environment (e.g. prod), local API will reject it.
+    // Detect that early and force a clean re-login instead of leaving the app in a broken state.
+    api.operatorMe(sess.token)
+      .then(() => null)
+      .catch((e) => {
+        if (cancelled) return;
+        if (e instanceof HttpError) {
+          const body = e.body as any;
+          const code = body?.detail?.code;
+          if (e.status === 401 || code === "INVALID_TOKEN") {
+            clearSession();
+            setSess(null);
+            setError("Your saved session is invalid for this environment. Please login again.");
+            return;
+          }
+        }
+      });
+
     refreshInbox().catch(() => null);
     refreshVehicles().catch(() => null);
     refreshSummary().catch(() => null);
@@ -251,7 +279,10 @@ export function FleetPortalApp() {
       refreshSummary().catch(() => null);
       refreshMaintHighlights().catch(() => null);
     }, 10000);
-    return () => window.clearInterval(t);
+    return () => {
+      cancelled = true;
+      window.clearInterval(t);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sess?.token]);
 
@@ -260,9 +291,36 @@ export function FleetPortalApp() {
       setSelectedReq(null);
       return;
     }
-    api.inboxDetail(sess.token, selectedReqId)
-      .then(setSelectedReq)
-      .catch(() => setSelectedReq(null));
+    const s = sess!;
+    let alive = true;
+
+    async function loadAndMaybeAdvance() {
+      try {
+        const d = await api.inboxDetail(s.token, selectedReqId);
+        if (!alive) return;
+        setSelectedReq(d);
+
+        // UX: opening a NEW request means the operator has started verification.
+        // Move state NEW -> CONTACTED automatically so the Rider tracking view progresses
+        // from "Request sent" to "Verification in progress".
+        if (d.state === "NEW" && canUpdateInbox(s.role)) {
+          await api.inboxSetState(s.token, selectedReqId, { state: "CONTACTED", note: "Verification started" });
+          if (!alive) return;
+          await refreshInbox();
+          const d2 = await api.inboxDetail(s.token, selectedReqId);
+          if (!alive) return;
+          setSelectedReq(d2);
+        }
+      } catch {
+        if (!alive) return;
+        setSelectedReq(null);
+      }
+    }
+
+    loadAndMaybeAdvance().catch(() => null);
+    return () => {
+      alive = false;
+    };
   }, [sess?.token, selectedReqId]);
 
   useEffect(() => {
@@ -377,6 +435,11 @@ export function FleetPortalApp() {
                     setOtp("");
                     setDevOtp("");
                     setTab("portfolio");
+                    // Immediately load data for portfolio view
+                    await refreshInbox();
+                    await refreshVehicles();
+                    await refreshSummary();
+                    await refreshMaintHighlights();
                   })
                 }
               >
@@ -441,20 +504,6 @@ export function FleetPortalApp() {
           </button>
           <button className="btn" disabled={busy} onClick={() => run(refreshSummary)}>
             Refresh portfolio
-          </button>
-          <button
-            className="btn btnPrimary"
-            disabled={busy || !canManageVehicles(sess.role)}
-            onClick={() =>
-              run(async () => {
-                const r = await api.seedDemo(sess.token, 28);
-                await refreshVehicles();
-                await refreshSummary();
-                setError(`Seeded demo fleet: ${r.vehicles_created} vehicles created.`);
-              })
-            }
-          >
-            Seed demo fleet
           </button>
           <button className="btn btnDanger" onClick={signOut}>
             Sign out
@@ -526,42 +575,226 @@ export function FleetPortalApp() {
               </div>
             </div>
 
-            <div className="grid2">
-              <div className="card stack">
-                <div className="row" style={{ justifyContent: "space-between" }}>
-                  <div style={{ fontWeight: 1000 }}>Operations map (demo)</div>
-                  <div className="pill">Avg battery: {summary?.avg_battery_pct != null ? `${summary.avg_battery_pct}%` : "—"}</div>
-                </div>
-                <FleetMapPanel
-                  vehicles={vehicles}
-                  selectedVehicleId={selectedVehicleId}
-                  onSelect={(id) => {
-                    setSelectedVehicleId(id);
-                    // keep user on portfolio, just select for details
-                  }}
-                />
-                <div className="helper">
-                  Vehicles are clustered around Pune “arenas” (Wakad, Hinjewadi, Chinchwad, Kharadi, etc). Green=Active, Amber=Maintenance, Gray=Inactive.
+            <div className="card stack">
+              <div className="row" style={{ justifyContent: "space-between" }}>
+                <div style={{ fontWeight: 1000 }}>Operations map</div>
+                <div className="pill">Avg battery: {summary?.avg_battery_pct != null ? `${summary.avg_battery_pct}%` : "—"}</div>
+              </div>
+              <FleetMapPanel
+                vehicles={vehicles}
+                selectedVehicleId=""
+                onSelect={() => {
+                  // Map markers are not selectable in portfolio view
+                }}
+              />
+              <div className="helper">
+                Green=Active, Amber=Maintenance, Gray=Inactive.
+              </div>
+            </div>
+
+            <div className="card stack">
+              <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
+                <div style={{ fontWeight: 1000 }}>Vehicles</div>
+                <div className="row">
+                  <div className="pill">{vehicles.length} vehicles</div>
+                  {canManageVehicles(sess.role) ? (
+                    <button
+                      className="btn btnPrimary"
+                      onClick={() => setShowAddVehicleForm(!showAddVehicleForm)}
+                    >
+                      {showAddVehicleForm ? "Cancel" : "Add vehicle"}
+                    </button>
+                  ) : null}
                 </div>
               </div>
+              <div className="helper">Click a vehicle to view maintenance details and manage telemetry binding.</div>
 
-              <div className="card stack">
-                <div style={{ fontWeight: 1000 }}>Arenas</div>
-                <div className="arenaGrid">
-                  {(summary?.arenas ?? []).slice(0, 6).map((a: any) => (
-                    <div key={a.name} className="arenaCard">
-                      <div className="arenaName">{a.name}</div>
-                      <div className="arenaMeta">
-                        <span className="tag">{a.vehicles_total} total</span>
-                        <span className="tag tagOk">{a.vehicles_active} active</span>
-                        <span className="tag tagWarn">{a.vehicles_in_maintenance} maint</span>
-                        <span className="tag">avg batt {a.avg_battery_pct != null ? `${a.avg_battery_pct}%` : "—"}</span>
-                      </div>
+              {showAddVehicleForm && canManageVehicles(sess.role) ? (
+                <div className="card stack" style={{ boxShadow: "none", background: "rgba(255,255,255,0.02)", marginTop: 16 }}>
+                  <div style={{ fontWeight: 900 }}>Add new vehicle</div>
+                  <div className="grid2">
+                    <div>
+                      <label>Registration number</label>
+                      <input value={newReg} onChange={(e) => setNewReg(e.target.value)} placeholder="MH12AB1234" />
+                      <div className="helper">Use the official registration number (unique vehicle ID).</div>
                     </div>
-                  ))}
-                  {!summary?.arenas?.length ? <div className="helper">No fleet data yet. Click “Seed demo fleet”.</div> : null}
+                    <div>
+                      <label>Vehicle type</label>
+                      <select value={newVehicleType} onChange={(e) => setNewVehicleType(e.target.value as any)}>
+                        <option value="EV Scooter">EV Scooter</option>
+                        <option value="EV Bike">EV Bike</option>
+                        <option value="EV 3W">EV 3W</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="grid2">
+                    <div>
+                      <label>Make (brand)</label>
+                      <input value={newMake} onChange={(e) => setNewMake(e.target.value)} placeholder="Ola / Ather / TVS…" />
+                    </div>
+                    <div>
+                      <label>Variant / trim</label>
+                      <input value={newVariant} onChange={(e) => setNewVariant(e.target.value)} placeholder="S1 Pro / 450X…" />
+                    </div>
+                  </div>
+
+                  <div className="grid2">
+                    <div>
+                      <label>Year</label>
+                      <input value={newYear} onChange={(e) => setNewYear(e.target.value)} inputMode="numeric" placeholder="2025" />
+                    </div>
+                    <div>
+                      <label>Color</label>
+                      <input value={newColor} onChange={(e) => setNewColor(e.target.value)} placeholder="White" />
+                    </div>
+                  </div>
+
+                  <div className="grid2">
+                    <div>
+                      <label>Battery capacity (kWh)</label>
+                      <input
+                        value={newBatteryKwh}
+                        onChange={(e) => setNewBatteryKwh(e.target.value)}
+                        inputMode="decimal"
+                        placeholder="3.0"
+                      />
+                    </div>
+                    <div>
+                      <label>Ownership</label>
+                      <select value={newOwnership} onChange={(e) => setNewOwnership(e.target.value as any)}>
+                        <option value="OWNED">Owned</option>
+                        <option value="LEASED">Leased</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {newOwnership === "LEASED" ? (
+                    <div>
+                      <label>Leasing partner</label>
+                      <input value={newLeasingPartner} onChange={(e) => setNewLeasingPartner(e.target.value)} placeholder="Eleride Leasing" />
+                    </div>
+                  ) : null}
+
+                  <div>
+                    <label>Notes</label>
+                    <textarea value={newNotes} onChange={(e) => setNewNotes(e.target.value)} placeholder="Condition, allocation, special remarks…" />
+                  </div>
+
+                  <div className="divider" />
+                  <div style={{ fontWeight: 900 }}>Telematics device binding (optional)</div>
+                  <div className="helper">Bind a telematics device to this vehicle for real-time tracking and telemetry.</div>
+                  <div className="grid2">
+                    <div>
+                      <label>Device ID</label>
+                      <input value={newDeviceId} onChange={(e) => setNewDeviceId(e.target.value)} placeholder="tmx-0001" />
+                    </div>
+                    <div>
+                      <label>Provider</label>
+                      <input value={newDeviceProvider} onChange={(e) => setNewDeviceProvider(e.target.value)} placeholder="demo" />
+                    </div>
+                  </div>
+
+                  <button
+                    className="btn btnPrimary"
+                    disabled={busy}
+                    onClick={() =>
+                      run(async () => {
+                        const reg = newReg.trim().toUpperCase();
+                        const model = `${newVehicleType}${newMake.trim() ? ` • ${newMake.trim()}` : ""}${newVariant.trim() ? ` ${newVariant.trim()}` : ""}`.trim();
+                        const meta = buildVehicleMetaString();
+                        const newVehicle = await api.vehicleCreate(sess.token, { registration_number: reg, model, meta });
+                        await refreshVehicles();
+                        
+                        // If device ID provided, bind it immediately
+                        if (newDeviceId.trim()) {
+                          await api.deviceBind(sess.token, newVehicle.id, {
+                            device_id: newDeviceId.trim(),
+                            provider: newDeviceProvider.trim() || undefined,
+                          });
+                        }
+                        
+                        // Reset form
+                        setNewReg("MH12AB1234");
+                        setNewVehicleType("EV Scooter");
+                        setNewMake("Ola");
+                        setNewVariant("S1 Pro");
+                        setNewYear("2025");
+                        setNewColor("White");
+                        setNewBatteryKwh("3.0");
+                        setNewOwnership("LEASED");
+                        setNewLeasingPartner("Eleride Leasing");
+                        setNewNotes("New vehicle, ready for onboarding.");
+                        setNewDeviceId("");
+                        setNewDeviceProvider("");
+                        setShowAddVehicleForm(false);
+                        setError(`Vehicle ${reg} created${newDeviceId.trim() ? ` with device ${newDeviceId.trim()} bound` : ""}.`);
+                      })
+                    }
+                  >
+                    Create vehicle
+                  </button>
                 </div>
-                <div className="divider" />
+              ) : null}
+
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Registration</th>
+                    <th>Model</th>
+                    <th>Arena</th>
+                    <th>Status</th>
+                    <th>Battery</th>
+                    <th>Last seen</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {vehicles.map((v) => (
+                    <tr
+                      key={v.id}
+                      style={{ cursor: "pointer" }}
+                      onClick={() => {
+                        setSelectedVehicleId(v.id);
+                        setTab("vehicle");
+                      }}
+                    >
+                      <td style={{ fontWeight: 900 }}>{v.registration_number}</td>
+                      <td className="helper">{v.model ?? "—"}</td>
+                      <td className="helper">{arenaFor(v.last_lat, v.last_lon)}</td>
+                      <td>
+                        <span className={v.status === "ACTIVE" ? "tag tagOk" : v.status === "IN_MAINTENANCE" ? "tag tagWarn" : "tag"}>
+                          {v.status}
+                        </span>
+                      </td>
+                      <td className="helper">{v.battery_pct != null ? `${v.battery_pct.toFixed(0)}%` : "—"}</td>
+                      <td className="helper">{v.last_telemetry_at ? new Date(v.last_telemetry_at).toLocaleString() : "—"}</td>
+                      <td>
+                        <button
+                          className="btn btnPrimary"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedVehicleId(v.id);
+                            setTab("vehicle");
+                          }}
+                        >
+                          View
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                  {vehicles.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="helper">
+                        No vehicles yet. {canManageVehicles(sess.role) ? 'Click "Add vehicle" to create one.' : "Contact an admin to add vehicles."}
+                      </td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="card stack">
                 <div className="row" style={{ justifyContent: "space-between" }}>
                   <div style={{ fontWeight: 1000 }}>Rider intake</div>
                   <div className="row">
@@ -599,84 +832,84 @@ export function FleetPortalApp() {
                 >
                   Open inbox
                 </button>
+            </div>
 
-                <div className="divider" />
-                <div className="row" style={{ justifyContent: "space-between", alignItems: "baseline" }}>
-                  <div style={{ fontWeight: 1000 }}>Maintenance feed</div>
-                  <div className="row">
-                    <div className="pill">{maintFeedTotalOpen} open (vehicles)</div>
-                    <button
-                      className="btn"
-                      disabled={busy}
-                      onClick={() =>
-                        run(async () => {
-                          await refreshMaintHighlights();
-                        })
-                      }
-                    >
-                      Refresh
-                    </button>
-                    <button
-                      className="btn"
-                      disabled={busy}
+            <div className="card stack">
+              <div className="row" style={{ justifyContent: "space-between", alignItems: "baseline" }}>
+                <div style={{ fontWeight: 1000 }}>Maintenance feed</div>
+                <div className="row">
+                  <div className="pill">{maintFeedTotalOpen} open (vehicles)</div>
+                  <button
+                    className="btn"
+                    disabled={busy}
+                    onClick={() =>
+                      run(async () => {
+                        await refreshMaintHighlights();
+                      })
+                    }
+                  >
+                    Refresh
+                  </button>
+                  <button
+                    className="btn"
+                    disabled={busy}
+                    onClick={() => {
+                      markSeen(LS_MAINT_LAST_SEEN);
+                      setMaintHighlightCount(0);
+                    }}
+                    title="Mark all current maintenance items as seen (clears highlight badges)"
+                  >
+                    Mark seen
+                  </button>
+                </div>
+              </div>
+              <div className="helper">
+                Shows OPEN maintenance vehicles. "UPDATED" means ETA/takt or assignment changed since you last viewed.
+              </div>
+
+              <div className="miniList" style={{ maxHeight: 220 }}>
+                {maintFeed.length === 0 ? <div className="helper">No open maintenance tickets right now.</div> : null}
+                {maintFeed.slice(0, 8).map((m) => {
+                  const ts = lastSeen(LS_MAINT_LAST_SEEN);
+                  const created = new Date(m.created_at).getTime();
+                  const upd = m.updated_at ? new Date(m.updated_at).getTime() : 0;
+                  const isNew = Number.isFinite(created) && created > ts;
+                  const isUpd = !isNew && Number.isFinite(upd) && upd > ts;
+                  const etaMin = minutesUntil(m.expected_ready_at ?? null);
+                  const etaLabel =
+                    etaMin == null ? "ETA —" : etaMin <= 0 ? "ETA due" : etaMin < 60 ? `ETA ${etaMin}m` : `ETA ${Math.round(etaMin / 60)}h`;
+                  const assigned = m.assigned_to_user_id ? "Assigned" : "Unassigned";
+                  return (
+                    <div
+                      key={m.record_id}
+                      className={`miniRow ${isNew || isUpd ? "rowPulse" : ""}`}
                       onClick={() => {
-                        markSeen(LS_MAINT_LAST_SEEN);
-                        setMaintHighlightCount(0);
+                        // jump to vehicle lifecycle page for this vehicle
+                        setSelectedVehicleId(m.vehicle_id);
+                        setTab("vehicle");
                       }}
-                      title="Mark all current maintenance items as seen (clears highlight badges)"
+                      title={`${m.registration_number} • ${m.category} • ${etaLabel}`}
                     >
-                      Mark seen
-                    </button>
-                  </div>
-                </div>
-                <div className="helper">
-                  Shows OPEN maintenance vehicles. “UPDATED” means ETA/takt or assignment changed since you last viewed.
-                </div>
-
-                <div className="miniList" style={{ maxHeight: 220 }}>
-                  {maintFeed.length === 0 ? <div className="helper">No open maintenance tickets right now.</div> : null}
-                  {maintFeed.slice(0, 8).map((m) => {
-                    const ts = lastSeen(LS_MAINT_LAST_SEEN);
-                    const created = new Date(m.created_at).getTime();
-                    const upd = m.updated_at ? new Date(m.updated_at).getTime() : 0;
-                    const isNew = Number.isFinite(created) && created > ts;
-                    const isUpd = !isNew && Number.isFinite(upd) && upd > ts;
-                    const etaMin = minutesUntil(m.expected_ready_at ?? null);
-                    const etaLabel =
-                      etaMin == null ? "ETA —" : etaMin <= 0 ? "ETA due" : etaMin < 60 ? `ETA ${etaMin}m` : `ETA ${Math.round(etaMin / 60)}h`;
-                    const assigned = m.assigned_to_user_id ? "Assigned" : "Unassigned";
-                    return (
-                      <div
-                        key={m.record_id}
-                        className={`miniRow ${isNew || isUpd ? "rowPulse" : ""}`}
-                        onClick={() => {
-                          // jump to vehicle lifecycle page for this vehicle
-                          setSelectedVehicleId(m.vehicle_id);
-                          setTab("vehicle");
-                        }}
-                        title={`${m.registration_number} • ${m.category} • ${etaLabel}`}
-                      >
-                        <div style={{ minWidth: 0 }}>
-                          <div className="miniPrimary">{m.registration_number}</div>
-                          <div className="miniSecondary" style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                            {m.category} • {etaLabel} • {assigned}
-                          </div>
-                          <div className="miniSecondary">
-                            Updated: {fmtDt(m.updated_at ?? null)} • Created: {fmtDt(m.created_at)}
-                          </div>
+                      <div style={{ minWidth: 0 }}>
+                        <div className="miniPrimary">{m.registration_number}</div>
+                        <div className="miniSecondary" style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                          {m.category} • {etaLabel} • {assigned}
                         </div>
-                        <div className="miniSecondary" style={{ textAlign: "right" }}>
-                          {isNew ? <span className="badgeNew">NEW</span> : isUpd ? <span className="badgeNew">UPDATED</span> : null}
+                        <div className="miniSecondary">
+                          Updated: {fmtDt(m.updated_at ?? null)} • Created: {fmtDt(m.created_at)}
                         </div>
                       </div>
-                    );
-                  })}
-                  {maintFeedTotalOpen > maintFeed.length ? (
-                    <div className="helper" style={{ marginTop: 8 }}>
-                      Showing {maintFeed.length} of {maintFeedTotalOpen} open maintenance vehicles.
+                      <div className="miniSecondary" style={{ textAlign: "right" }}>
+                        {isNew ? <span className="badgeNew">NEW</span> : isUpd ? <span className="badgeNew">UPDATED</span> : null}
+                      </div>
                     </div>
-                  ) : null}
-                </div>
+                  );
+                })}
+                {maintFeedTotalOpen > maintFeed.length ? (
+                  <div className="helper" style={{ marginTop: 8 }}>
+                    Showing {maintFeed.length} of {maintFeedTotalOpen} open maintenance vehicles.
+                  </div>
+                ) : null}
               </div>
             </div>
           </div>
@@ -765,6 +998,14 @@ export function FleetPortalApp() {
                 <div className="helper">Loading…</div>
               ) : (
                 <>
+                  {selectedReq.matched_vehicle_id ? (
+                    <div className="card stack" style={{ boxShadow: "none", background: "rgba(255,255,255,0.02)" }}>
+                      <div style={{ fontWeight: 1000 }}>Suggested / assigned vehicle</div>
+                      <div className="helper">
+                        Vehicle ID: <span className="pill">{selectedReq.matched_vehicle_id}</span>
+                      </div>
+                    </div>
+                  ) : null}
                   <div className="kvGrid">
                     <div className="kv">
                       <div className="kvLabel">Rider name</div>
@@ -841,13 +1082,14 @@ export function FleetPortalApp() {
                       disabled={!canUpdateInbox(sess.role) || busy}
                       onClick={() =>
                         run(async () => {
-                          await api.inboxSetState(sess.token, selectedReq.supply_request_id, { state: "ONBOARDED", note: "Vehicle assigned" });
+                          const r = await api.inboxAcceptAutoAssign(sess.token, selectedReq.supply_request_id);
                           await refreshInbox();
                           setSelectedReq(await api.inboxDetail(sess.token, selectedReq.supply_request_id));
+                          setError(`Accepted. Assigned vehicle: ${r.matched_vehicle_registration_number}`);
                         })
                       }
                     >
-                      Onboarded
+                      Accept & auto-assign vehicle
                     </button>
                     <button
                       className="btn btnDanger"
@@ -863,6 +1105,37 @@ export function FleetPortalApp() {
                       Reject
                     </button>
                   </div>
+
+                  {selectedReq.state === "ONBOARDED" ? (
+                    <>
+                      <div className="divider" />
+                      <div className="card stack" style={{ boxShadow: "none", background: "rgba(255,255,255,0.02)" }}>
+                        <div style={{ fontWeight: 1000 }}>Close loop: verify pickup QR</div>
+                        <div className="helper">
+                          Enter the rider’s <b>Pickup code</b> shown under their QR to complete the workflow.
+                        </div>
+                        <div className="row">
+                          <div style={{ flex: 1 }}>
+                            <label>Pickup code</label>
+                            <input value={pickupCode} onChange={(e) => setPickupCode(e.target.value)} placeholder="e.g. A1B2C3" />
+                          </div>
+                          <button
+                            className="btn btnPrimary"
+                            disabled={busy || pickupCode.trim().length < 4}
+                            onClick={() =>
+                              run(async () => {
+                                const r = await api.pickupVerify(sess.token, selectedReq.supply_request_id, pickupCode.trim());
+                                setError(`Pickup verified at ${new Date(r.pickup_verified_at).toLocaleString()}`);
+                                setPickupCode("");
+                              })
+                            }
+                          >
+                            Verify & close
+                          </button>
+                        </div>
+                      </div>
+                    </>
+                  ) : null}
                 </>
               )}
             </div>
@@ -1310,11 +1583,55 @@ function FleetMapPanel(props: {
   selectedVehicleId: string;
   onSelect: (id: string) => void;
 }) {
-  // Pune-ish viewport. Matches the seed-demo area and keeps the map informative.
-  const bbox = { left: 73.70, bottom: 18.45, right: 73.98, top: 18.68 };
+  const [center, setCenter] = useState<{ lat: number; lon: number } | null>(null);
+  const [radiusKm, setRadiusKm] = useState<number>(18);
+  const [locErr, setLocErr] = useState<string | null>(null);
+
   const pts = props.vehicles
     .filter((v) => v.last_lat != null && v.last_lon != null)
     .map((v) => ({ ...v, lat: v.last_lat as number, lon: v.last_lon as number }));
+
+  const defaultCenter = useMemo(() => {
+    // If we have vehicles, center around them; otherwise Pune demo.
+    if (pts.length) {
+      const lat = pts.reduce((a, v) => a + v.lat, 0) / pts.length;
+      const lon = pts.reduce((a, v) => a + v.lon, 0) / pts.length;
+      return { lat, lon };
+    }
+    return { lat: 18.5204, lon: 73.8567 };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pts.length]);
+
+  const effectiveCenter = center ?? defaultCenter;
+
+  function bboxFor(lat: number, lon: number, rKm: number) {
+    const dLat = rKm / 111.0;
+    const dLon = rKm / (111.0 * Math.max(0.2, Math.cos((lat * Math.PI) / 180)));
+    return { left: lon - dLon, right: lon + dLon, bottom: lat - dLat, top: lat + dLat };
+  }
+
+  const bbox = useMemo(() => bboxFor(effectiveCenter.lat, effectiveCenter.lon, radiusKm), [effectiveCenter.lat, effectiveCenter.lon, radiusKm]);
+
+  function requestMyLocation() {
+    setLocErr(null);
+    if (!navigator.geolocation) {
+      setLocErr("Geolocation not supported.");
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setCenter({ lat: pos.coords.latitude, lon: pos.coords.longitude });
+      },
+      () => setLocErr("Could not get your location."),
+      { enableHighAccuracy: true, timeout: 8000, maximumAge: 30_000 },
+    );
+  }
+
+  useEffect(() => {
+    // Best-effort: center map to current operator location on first render.
+    requestMyLocation();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   function xy(lat: number, lon: number) {
     const x = ((lon - bbox.left) / (bbox.right - bbox.left)) * 100;
@@ -1331,84 +1648,51 @@ function FleetMapPanel(props: {
   const selected = props.vehicles.find((v) => v.id === props.selectedVehicleId) ?? null;
 
   return (
-    <div className="grid2">
-      <div className="osmWrap">
-        <iframe className="osmIframe" title="fleet-map" src={buildOsmEmbedBBox(bbox)} loading="lazy" />
-        <div className="markerLayer">
-          {pts.slice(0, 350).map((v) => {
-            const p = xy(v.lat, v.lon);
-            const isSel = v.id === props.selectedVehicleId;
-            return (
-              <div
-                key={v.id}
-                className={`vehMarker ${isSel ? "vehMarkerSelected" : ""}`}
-                style={{ left: `${p.x}%`, top: `${p.y}%`, background: colorFor(v) }}
-                title={`${v.registration_number} • ${arenaFor(v.lat, v.lon)} • ${v.status} • batt ${v.battery_pct ?? "—"}%`}
-                onClick={() => props.onSelect(v.id)}
-              />
-            );
-          })}
-        </div>
-        <div className="mapLegend">
-          <div className="legendItem">
-            <span className="legendSwatch" style={{ background: "rgba(22, 163, 74, 0.95)" }} />
-            Active
-          </div>
-          <div className="legendItem">
-            <span className="legendSwatch" style={{ background: "rgba(245, 158, 11, 0.95)" }} />
-            Maintenance
-          </div>
-          <div className="legendItem">
-            <span className="legendSwatch" style={{ background: "rgba(148, 163, 184, 0.95)" }} />
-            Inactive
-          </div>
-        </div>
+    <div className="osmWrap">
+      <iframe className="osmIframe" title="fleet-map" src={buildOsmEmbedBBox(bbox, center)} loading="lazy" />
+      <div className="mapControls">
+        <button className="btn btnSmall" onClick={requestMyLocation} title="Center map to your current location">
+          My location
+        </button>
+        <button className="btn btnSmall" onClick={() => setRadiusKm((r) => Math.max(4, Math.round(r * 0.75)))} title="Zoom in">
+          +
+        </button>
+        <button className="btn btnSmall" onClick={() => setRadiusKm((r) => Math.min(80, Math.round(r * 1.35)))} title="Zoom out">
+          −
+        </button>
       </div>
-
-      <div className="mapSide">
-        <div style={{ fontWeight: 1000 }}>Selected vehicle</div>
-        <div className="helper">Click a marker on the map to inspect.</div>
-        <div className="divider" />
-        {selected ? (
-          <div className="stack" style={{ gap: 8 }}>
-            <div className="row" style={{ justifyContent: "space-between" }}>
-              <div>
-                <div className="miniPrimary">{selected.registration_number}</div>
-                <div className="miniSecondary">{arenaFor(selected.last_lat, selected.last_lon)} • {selected.status}</div>
-              </div>
-              <div className="tag">{selected.battery_pct != null ? `${selected.battery_pct.toFixed(0)}%` : "—"}</div>
-            </div>
-            <div className="miniSecondary">
-              Last telemetry: {selected.last_telemetry_at ? new Date(selected.last_telemetry_at).toLocaleString() : "—"}
-            </div>
-            <div className="miniSecondary">
-              Odometer: {selected.odometer_km != null ? `${selected.odometer_km.toFixed(1)} km` : "—"}
-            </div>
-          </div>
-        ) : (
-          <div className="helper">No vehicle selected.</div>
-        )}
-
-        <div className="miniList">
-          <div className="miniSecondary" style={{ marginBottom: 8 }}>
-            Vehicles on map: {pts.length}
-          </div>
-          {pts.slice(0, 60).map((v) => (
+      <div className="markerLayer">
+        {center ? (
+          (() => {
+            const p = xy(center.lat, center.lon);
+            return <div className="meMarker" style={{ left: `${p.x}%`, top: `${p.y}%` }} title="You are here" />;
+          })()
+        ) : null}
+        {pts.slice(0, 350).map((v) => {
+          const p = xy(v.lat, v.lon);
+          return (
             <div
               key={v.id}
-              className={`miniRow ${v.id === props.selectedVehicleId ? "miniRowActive" : ""}`}
-              onClick={() => props.onSelect(v.id)}
-            >
-              <div>
-                <div className="miniPrimary">{v.registration_number}</div>
-                <div className="miniSecondary">
-                  {arenaFor(v.lat, v.lon)} • {v.status}
-                </div>
-              </div>
-              <div className="miniSecondary">{v.battery_pct != null ? `${v.battery_pct.toFixed(0)}%` : "—"}</div>
-            </div>
-          ))}
-          {pts.length > 60 ? <div className="helper">Showing 60 of {pts.length} vehicles.</div> : null}
+              className="vehMarker"
+              style={{ left: `${p.x}%`, top: `${p.y}%`, background: colorFor(v) }}
+              title={`${v.registration_number} • ${arenaFor(v.lat, v.lon)} • ${v.status} • batt ${v.battery_pct ?? "—"}%`}
+            />
+          );
+        })}
+      </div>
+      <div className="mapLegend">
+        {locErr ? <div className="helper" style={{ color: "rgba(220,38,38,0.9)" }}>{locErr}</div> : null}
+        <div className="legendItem">
+          <span className="legendSwatch" style={{ background: "rgba(22, 163, 74, 0.95)" }} />
+          Active
+        </div>
+        <div className="legendItem">
+          <span className="legendSwatch" style={{ background: "rgba(245, 158, 11, 0.95)" }} />
+          Maintenance
+        </div>
+        <div className="legendItem">
+          <span className="legendSwatch" style={{ background: "rgba(148, 163, 184, 0.95)" }} />
+          Inactive
         </div>
       </div>
     </div>

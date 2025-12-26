@@ -19,6 +19,9 @@ class Settings(BaseSettings):
     # MVP-only knobs
     otp_ttl_seconds: int = 5 * 60
     otp_len: int = 6
+    # If true, the backend will generate OTPs and return `dev_otp` even in prod,
+    # without requiring MSG91 to be configured.
+    otp_dev_mode: bool = False
 
     # CORS (dev)
     cors_allow_origins: str = (

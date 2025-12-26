@@ -7,6 +7,7 @@ from app.core.security import Principal
 from app.domains.operator_portal.models import OperatorMembershipRole, OperatorOtpChallengeMode
 from app.domains.operator_portal.schemas import (
     DashboardSummaryOut,
+    InboxAcceptOut,
     InboxListOut,
     InboxRequestDetailOut,
     InboxUpdateIn,
@@ -21,6 +22,8 @@ from app.domains.operator_portal.schemas import (
     OperatorOtpRequestOut,
     OperatorOtpVerifyIn,
     OperatorSessionOut,
+    PickupVerifyIn,
+    PickupVerifyOut,
     TelematicsBindIn,
     TelemetryIn,
     VehicleCreateIn,
@@ -45,6 +48,8 @@ from app.domains.operator_portal.service import (
     list_inbox,
     list_maintenance,
     list_vehicles,
+    accept_inbox_request_auto_assign_vehicle,
+    verify_pickup_qr,
     request_operator_otp,
     upsert_inbox_state,
     verify_operator_otp,
@@ -64,7 +69,7 @@ def operator_otp_request(payload: OperatorOtpRequestIn, db: Session = Depends(ge
         operator_name=payload.operator_name,
         operator_slug=payload.operator_slug,
     )
-    dev_otp = getattr(ch, "_dev_otp", None) if settings.env == "dev" else None
+    dev_otp = getattr(ch, "_dev_otp", None) if (settings.env == "dev" or settings.otp_dev_mode) else None
     return OperatorOtpRequestOut(request_id=ch.id, expires_in_seconds=settings.otp_ttl_seconds, dev_otp=dev_otp)
 
 
@@ -110,10 +115,11 @@ def open_maintenance_feed(
 @router.post("/admin/seed-demo", response_model=dict)
 def seed_demo(
     vehicles: int = 25,
+    city: str = "PUNE",
     principal: Principal = Depends(require_operator_roles({OperatorMembershipRole.OWNER.value, OperatorMembershipRole.ADMIN.value})),
     db: Session = Depends(get_db),
 ) -> dict:
-    return seed_demo_fleet(db, operator_id=principal.operator_id, vehicles=vehicles)  # type: ignore[arg-type]
+    return seed_demo_fleet(db, operator_id=principal.operator_id, vehicles=vehicles, city=city)  # type: ignore[arg-type]
 
 
 @router.post("/admin/reset-seed", response_model=dict)
@@ -121,6 +127,7 @@ def reset_seed_demo(
     vehicles: int = 30,
     maintenance_ratio: float = 0.18,
     inactive_ratio: float = 0.08,
+    city: str = "PUNE",
     principal: Principal = Depends(require_operator_roles({OperatorMembershipRole.OWNER.value, OperatorMembershipRole.ADMIN.value})),
     db: Session = Depends(get_db),
 ) -> dict:
@@ -130,6 +137,7 @@ def reset_seed_demo(
         vehicles=vehicles,
         maintenance_ratio=maintenance_ratio,
         inactive_ratio=inactive_ratio,
+        city=city,
     )
 
 
@@ -172,6 +180,46 @@ def update_inbox_state(
         note=payload.note,
     )
     return {"ok": True, "state": row.state.value}
+
+
+@router.post("/inbox/requests/{supply_request_id}/accept", response_model=InboxAcceptOut)
+def accept_and_assign(
+    supply_request_id: str,
+    principal: Principal = Depends(require_operator_roles({OperatorMembershipRole.OWNER.value, OperatorMembershipRole.ADMIN.value, OperatorMembershipRole.OPS.value})),
+    db: Session = Depends(get_db),
+) -> InboxAcceptOut:
+    payload = accept_inbox_request_auto_assign_vehicle(
+        db,
+        operator_id=principal.operator_id,  # type: ignore[arg-type]
+        supply_request_id=supply_request_id,
+    )
+    return InboxAcceptOut(**payload)
+
+
+@router.post("/inbox/requests/{supply_request_id}/pickup/verify", response_model=PickupVerifyOut)
+def pickup_verify(
+    supply_request_id: str,
+    payload: PickupVerifyIn,
+    principal: Principal = Depends(
+        require_operator_roles(
+            {
+                OperatorMembershipRole.OWNER.value,
+                OperatorMembershipRole.ADMIN.value,
+                OperatorMembershipRole.OPS.value,
+                OperatorMembershipRole.MAINT.value,
+            }
+        )
+    ),
+    db: Session = Depends(get_db),
+) -> PickupVerifyOut:
+    out = verify_pickup_qr(
+        db,
+        operator_id=principal.operator_id,  # type: ignore[arg-type]
+        supply_request_id=supply_request_id,
+        pickup_code=payload.pickup_code,
+        verified_by_user_id=principal.sub,  # type: ignore[arg-type]
+    )
+    return PickupVerifyOut(**out)
 
 
 @router.post("/vehicles", response_model=VehicleOut)

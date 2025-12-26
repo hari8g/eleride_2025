@@ -59,6 +59,7 @@ class InboxRequestItem(BaseModel):
     created_at: str
     inbox_updated_at: str | None = None
     pickup_location: str | None = None
+    matched_vehicle_id: str | None = None
     state: OperatorInboxState
     note: str | None = None
     rider: InboxRiderSnapshot
@@ -87,9 +88,28 @@ class InboxRequestDetailOut(BaseModel):
     pickup_location: str | None = None
     time_window: str | None = None
     requirements: str | None = None
+    matched_vehicle_id: str | None = None
     state: OperatorInboxState
     note: str | None = None
     rider: InboxRiderDetail
+
+
+class InboxAcceptOut(BaseModel):
+    ok: bool = True
+    state: OperatorInboxState
+    matched_vehicle_id: str
+    matched_vehicle_registration_number: str
+    matched_score: float | None = None
+    matched_reasons: list[str] | None = None
+
+
+class PickupVerifyIn(BaseModel):
+    pickup_code: str = Field(min_length=4, max_length=16)
+
+
+class PickupVerifyOut(BaseModel):
+    ok: bool = True
+    pickup_verified_at: str
 
 
 class InboxUpdateIn(BaseModel):

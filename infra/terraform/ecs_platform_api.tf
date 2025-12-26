@@ -65,9 +65,9 @@ resource "aws_lb_target_group" "api" {
   health_check {
     path                = "/health"
     interval            = 30
-    timeout             = 5
+    timeout             = 10
     healthy_threshold   = 2
-    unhealthy_threshold = 3
+    unhealthy_threshold = 5
     matcher             = "200"
   }
 
@@ -115,14 +115,16 @@ resource "aws_ecs_task_definition" "platform_api" {
         { name = "JWT_AUDIENCE", value = "eleride-rider" },
         { name = "DATABASE_URL", value = local.database_url },
         { name = "REDIS_URL", value = "" }, # add ElastiCache later
-        { name = "CORS_ALLOW_ORIGINS", value = var.cors_allow_origins },
+        { name = "CORS_ALLOW_ORIGINS", value = local.cors_allow_origins_effective },
+        { name = "OTP_DEV_MODE", value = tostring(var.otp_dev_mode) },
 
         { name = "MSG91_API_KEY", value = var.msg91_api_key },
         { name = "MSG91_SENDER_ID", value = var.msg91_sender_id },
         { name = "MSG91_OTP_TEMPLATE_ID", value = var.msg91_otp_template_id },
         { name = "MSG91_WHATSAPP_FLOW_ID", value = var.msg91_whatsapp_flow_id },
         { name = "MSG91_WHATSAPP_OTP_VAR", value = var.msg91_whatsapp_otp_var },
-        { name = "MSG91_OTP_CHANNEL_ORDER", value = var.msg91_otp_channel_order }
+        { name = "MSG91_OTP_CHANNEL_ORDER", value = var.msg91_otp_channel_order },
+        { name = "CASHFLOW_DATA_DIR", value = "/app/cashflow_data" }
       ]
       logConfiguration = {
         logDriver = "awslogs"
@@ -159,6 +161,7 @@ resource "aws_ecs_service" "platform_api" {
 
   deployment_minimum_healthy_percent = 50
   deployment_maximum_percent         = 200
+  health_check_grace_period_seconds  = 60
 
   depends_on = [aws_lb_listener.http]
 

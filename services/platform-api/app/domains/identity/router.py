@@ -13,7 +13,7 @@ router = APIRouter(prefix="/auth")
 @router.post("/otp/request", response_model=OTPRequestOut)
 def otp_request(payload: OTPRequestIn, db: Session = Depends(get_db)) -> OTPRequestOut:
     challenge, otp = request_otp(db, payload.phone)
-    dev_otp = otp if settings.env == "dev" else None
+    dev_otp = otp if (settings.env == "dev" or settings.otp_dev_mode) else None
     return OTPRequestOut(
         request_id=challenge.id,
         expires_in_seconds=settings.otp_ttl_seconds,

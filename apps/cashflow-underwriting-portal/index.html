@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Cashflow Underwriting Engine</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <img class="brand-logo" src="assets/eleride-logo.png" alt="eleRide" />
+        <div>
+          <div class="title">Cashflow Underwriting Engine</div>
+          <div class="subtitle">Rider offers, portfolio & working-capital insights</div>
+        </div>
+      </div>
+      <nav class="nav">
+        <a class="nav-link active" href="index.html">Dashboard</a>
+        <a class="nav-link" href="scenarios.html">Scenarios</a>
+        <a class="nav-link" href="payslips.html">Payslips</a>
+      </nav>
+      <div class="meta">
+        <div id="generatedAt" class="pill">Loading…</div>
+        <button id="reloadBtn" class="btn">Reload</button>
+      </div>
+    </header>
+
+    <main class="container">
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Portfolio</h2>
+          <div class="tabs" role="tablist" aria-label="Portfolio tabs">
+            <button class="tab active" data-tab="lender" role="tab">Lender</button>
+            <button class="tab" data-tab="threepl" role="tab">3PL</button>
+          </div>
+        </div>
+
+        <div id="portfolioCards" class="cards"></div>
+        <div id="threeplCards" class="cards hidden"></div>
+
+        <section id="lenderCostStack" class="panel nested-panel hidden" aria-label="Required APR">
+          <div class="panel-head">
+            <div>
+              <h2>Required APR</h2>
+              <div class="muted">Cost stack: COC + expected loss + ops/CAC + target margin (annualized).</div>
+            </div>
+          </div>
+
+          <div class="filters cost-filters">
+            <div class="field">
+              <label for="csCoc">COC (%)</label>
+              <input id="csCoc" type="number" min="0" max="100" step="0.5" value="14" />
+            </div>
+            <div class="field">
+              <label for="csOps">Ops + CAC (₹ / disbursal)</label>
+              <input id="csOps" type="number" min="0" step="10" value="40" />
+            </div>
+            <div class="field">
+              <label for="csMargin">Target margin (%)</label>
+              <input id="csMargin" type="number" min="0" max="100" step="0.5" value="5" />
+            </div>
+          </div>
+
+          <div id="lenderCostCards" class="cards"></div>
+        </section>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Offers</h2>
+          <div class="tabs" role="tablist" aria-label="Offer tabs">
+            <button class="tab active" data-offers="lender" role="tab">Lender offers</button>
+            <button class="tab" data-offers="threepl" role="tab">3PL offers</button>
+          </div>
+        </div>
+
+        <div class="filters">
+          <div class="field">
+            <label for="search">Search rider</label>
+            <input id="search" type="search" placeholder="Name / cee_id / PAN" />
+          </div>
+
+          <div class="field">
+            <label for="tier">Risk tier</label>
+            <select id="tier">
+              <option value="">All</option>
+              <option value="A">A</option>
+              <option value="B">B</option>
+              <option value="C">C</option>
+              <option value="D">D</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label for="eligible">Eligibility</label>
+            <select id="eligible">
+              <option value="">All</option>
+              <option value="1">Eligible</option>
+              <option value="0">Declined</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label for="minLimit">Min limit (₹)</label>
+            <input id="minLimit" type="number" min="0" step="100" placeholder="0" />
+          </div>
+
+          <div class="field">
+            <label>&nbsp;</label>
+            <button id="clearBtn" class="btn secondary">Clear</button>
+          </div>
+        </div>
+
+        <div class="table-wrap">
+          <table class="table" id="offersTable">
+            <thead>
+              <tr>
+                <th>Eligible</th>
+                <th>Tier</th>
+                <th>Rider</th>
+                <th>cee_id</th>
+                <th>City</th>
+                <th class="num">Limit (₹)</th>
+                <th class="num">Weekly deduction (₹)</th>
+                <th class="num">Deduction %</th>
+                <th class="num">Forecast payout/wk (₹)</th>
+                <th class="num">CV</th>
+                <th class="num">Active weeks</th>
+              </tr>
+            </thead>
+            <tbody id="offersBody"></tbody>
+          </table>
+        </div>
+
+        <div class="foot">
+          <div id="rowCount" class="muted"></div>
+          <div class="muted">Tip: click a row to see rider timeline.</div>
+        </div>
+      </section>
+    </main>
+
+    <dialog id="riderDialog" class="dialog">
+      <div class="dialog-head">
+        <div>
+          <div id="dlgTitle" class="dlg-title"></div>
+          <div id="dlgSubtitle" class="dlg-subtitle"></div>
+        </div>
+        <button id="dlgClose" class="btn secondary">Close</button>
+      </div>
+
+      <div class="dialog-grid">
+        <div class="dialog-card">
+          <h3>Offer</h3>
+          <div id="dlgOffer" class="kv"></div>
+        </div>
+        <div class="dialog-card">
+          <h3>Rider timeline (net payout)</h3>
+          <canvas id="spark" width="800" height="300"></canvas>
+          <div id="sparkMeta" class="muted"></div>
+        </div>
+      </div>
+    </dialog>
+
+    <script src="app.js"></script>
+  </body>
+</html>
+
+

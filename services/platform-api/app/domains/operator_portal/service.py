@@ -1,5 +1,6 @@
 import re
 import random
+import json
 from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException, status
@@ -10,6 +11,7 @@ from app.core.config import settings
 from app.core.security import create_access_token, generate_otp, hash_otp, verify_otp_hash
 from app.domains.commitment_policy.models import CommitmentLockMode
 from app.domains.commitment_policy.service import create_commitment
+from app.domains.matchmaking.service import lane_anchor, score_vehicle
 from app.domains.operator_portal.models import (
     MaintenanceRecord,
     MaintenanceStatus,
@@ -28,7 +30,255 @@ from app.domains.operator_portal.models import (
 )
 from app.domains.supply.models import SupplyRequest
 from app.domains.rider.models import Rider
+from app.utils.qr import pickup_qr_code
 from app.utils.sms import msg91_channels_available, msg91_missing_fields, send_otp_best_effort
+
+
+def accept_inbox_request_auto_assign_vehicle(
+    db: Session,
+    *,
+    operator_id: str,
+    supply_request_id: str,
+    note: str | None = None,
+) -> dict:
+    """
+    Accept (ONBOARDED) an incoming rider request and auto-assign a vehicle.
+
+    "Blocked" vehicle semantics for this MVP:
+    - A vehicle is considered blocked/unavailable if it is the matched vehicle of any
+      supply_request for this operator whose inbox state is ONBOARDED.
+    - This avoids schema changes/migrations by deriving blocking from existing tables.
+    """
+    now = datetime.now(timezone.utc)
+
+    # Lock request row so two accepts don't race on the same request.
+    req: SupplyRequest | None = (
+        db.query(SupplyRequest)
+        .filter(SupplyRequest.id == supply_request_id, SupplyRequest.operator_id == operator_id)
+        .with_for_update()
+        .one_or_none()
+    )
+    if not req:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Request not found")
+
+    # Current inbox state (if any). We'll update/insert to ONBOARDED.
+    st: OperatorRequestInbox | None = (
+        db.query(OperatorRequestInbox)
+        .filter(OperatorRequestInbox.operator_id == operator_id, OperatorRequestInbox.supply_request_id == supply_request_id)
+        .with_for_update()
+        .one_or_none()
+    )
+    prev_state = st.state if st else None
+    if st and st.state == OperatorInboxState.ONBOARDED:
+        # Already accepted. Return current assignment (best-effort).
+        vid = req.matched_vehicle_id
+        v = db.get(Vehicle, vid) if vid else None
+        return {
+            "ok": True,
+            "state": OperatorInboxState.ONBOARDED,
+            "matched_vehicle_id": vid or "",
+            "matched_vehicle_registration_number": (v.registration_number if v else ""),
+            "matched_score": req.matched_score,
+            "matched_reasons": (json.loads(req.matched_reasons) if req.matched_reasons else None),
+        }
+
+    # Vehicles blocked by already-accepted (ONBOARDED) requests.
+    blocked_vehicle_ids = {
+        r[0]
+        for r in (
+            db.query(SupplyRequest.matched_vehicle_id)
+            .join(OperatorRequestInbox, OperatorRequestInbox.supply_request_id == SupplyRequest.id)
+            .filter(
+                OperatorRequestInbox.operator_id == operator_id,
+                OperatorRequestInbox.state == OperatorInboxState.ONBOARDED,
+                SupplyRequest.matched_vehicle_id.isnot(None),
+            )
+            .all()
+        )
+        if r[0]
+    }
+
+    chosen: Vehicle | None = None
+    # Use the lane anchor to keep assignment city-consistent (Bangalore riders get Bangalore vehicles, etc.)
+    lane_lat, lane_lon, _lane_source = lane_anchor(lane_id=req.lane_id, rider_lat=None, rider_lon=None)
+    # ~50-60km bounding box for city-level filtering (quick SQL filter; avoids JSON meta parsing)
+    lat_min = lane_lat - 0.55
+    lat_max = lane_lat + 0.55
+    lon_min = lane_lon - 0.70
+    lon_max = lane_lon + 0.70
+
+    # Prefer existing recommendation if it’s still available.
+    if req.matched_vehicle_id and req.matched_vehicle_id not in blocked_vehicle_ids:
+        preferred: Vehicle | None = (
+            db.query(Vehicle)
+            .filter(
+                Vehicle.id == req.matched_vehicle_id,
+                Vehicle.operator_id == operator_id,
+                Vehicle.status == VehicleStatus.ACTIVE,
+                Vehicle.last_lat.isnot(None),
+                Vehicle.last_lon.isnot(None),
+                Vehicle.last_lat >= lat_min,
+                Vehicle.last_lat <= lat_max,
+                Vehicle.last_lon >= lon_min,
+                Vehicle.last_lon <= lon_max,
+            )
+            .with_for_update(skip_locked=True)
+            .one_or_none()
+        )
+        chosen = preferred
+
+    # Otherwise pick best available ACTIVE vehicle, excluding blocked ones.
+    if not chosen:
+        q = (
+            db.query(Vehicle)
+            .filter(
+                Vehicle.operator_id == operator_id,
+                Vehicle.status == VehicleStatus.ACTIVE,
+                (~Vehicle.id.in_(blocked_vehicle_ids)) if blocked_vehicle_ids else True,  # type: ignore[arg-type]
+                Vehicle.last_lat.isnot(None),
+                Vehicle.last_lon.isnot(None),
+                Vehicle.last_lat >= lat_min,
+                Vehicle.last_lat <= lat_max,
+                Vehicle.last_lon >= lon_min,
+                Vehicle.last_lon <= lon_max,
+            )
+            .order_by(
+                Vehicle.battery_pct.desc().nullslast(),
+                Vehicle.last_telemetry_at.desc().nullslast(),
+                Vehicle.created_at.asc(),
+            )
+            .with_for_update(skip_locked=True)
+        )
+        chosen = q.first()
+
+    if not chosen:
+        # Fallback: if there are no city-local vehicles, allow any ACTIVE vehicle so the demo doesn't hard-fail.
+        q = (
+            db.query(Vehicle)
+            .filter(
+                Vehicle.operator_id == operator_id,
+                Vehicle.status == VehicleStatus.ACTIVE,
+                (~Vehicle.id.in_(blocked_vehicle_ids)) if blocked_vehicle_ids else True,  # type: ignore[arg-type]
+            )
+            .order_by(
+                Vehicle.battery_pct.desc().nullslast(),
+                Vehicle.last_telemetry_at.desc().nullslast(),
+                Vehicle.created_at.asc(),
+            )
+            .with_for_update(skip_locked=True)
+        )
+        chosen = q.first()
+
+    if not chosen:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "NO_AVAILABLE_VEHICLE", "message": "No ACTIVE vehicles available to assign."},
+        )
+
+    # Explainable score (lane anchor uses deterministic fallback if no rider lat/lon are stored in MVP).
+    score, _dist, reasons, _eligible = score_vehicle(
+        v=chosen,
+        lane_lat=lane_lat,
+        lane_lon=lane_lon,
+        max_km=12.0,
+        min_batt=20.0,
+        max_age_min=240.0,
+    )
+
+    req.matched_vehicle_id = chosen.id
+    req.matched_score = float(score)
+    try:
+        req.matched_reasons = json.dumps(reasons)
+    except Exception:
+        req.matched_reasons = None
+
+    # Update/insert inbox state row to ONBOARDED (accepted).
+    auto_note = note or f"Accepted. Auto-assigned vehicle {chosen.registration_number}."
+    if st:
+        st.state = OperatorInboxState.ONBOARDED
+        st.note = auto_note
+        st.updated_at = now
+    else:
+        st = OperatorRequestInbox(
+            operator_id=operator_id,
+            supply_request_id=supply_request_id,
+            state=OperatorInboxState.ONBOARDED,
+            note=auto_note,
+            updated_at=now,
+        )
+        db.add(st)
+
+    db.commit()
+    db.refresh(req)
+    db.refresh(st)
+
+    # When a rider is marked onboarded/approved, hide demand for 5 days.
+    if prev_state != OperatorInboxState.ONBOARDED:
+        create_commitment(
+            db,
+            rider_id=req.rider_id,
+            operator_id=operator_id,
+            lane_id=req.lane_id,
+            min_days=5,
+            lock_mode=CommitmentLockMode.HIDE_ALL_DEMAND,
+        )
+
+    return {
+        "ok": True,
+        "state": st.state,
+        "matched_vehicle_id": chosen.id,
+        "matched_vehicle_registration_number": chosen.registration_number,
+        "matched_score": req.matched_score,
+        "matched_reasons": (json.loads(req.matched_reasons) if req.matched_reasons else None),
+    }
+
+
+def verify_pickup_qr(
+    db: Session,
+    *,
+    operator_id: str,
+    supply_request_id: str,
+    pickup_code: str,
+    verified_by_user_id: str,
+) -> dict:
+    now = datetime.now(timezone.utc)
+    code_in = pickup_code.strip().upper()
+
+    req: SupplyRequest | None = (
+        db.query(SupplyRequest)
+        .filter(SupplyRequest.id == supply_request_id, SupplyRequest.operator_id == operator_id)
+        .with_for_update()
+        .one_or_none()
+    )
+    if not req:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Request not found")
+
+    # Must be accepted first.
+    st: OperatorRequestInbox | None = (
+        db.query(OperatorRequestInbox)
+        .filter(OperatorRequestInbox.operator_id == operator_id, OperatorRequestInbox.supply_request_id == supply_request_id)
+        .one_or_none()
+    )
+    if not st or st.state != OperatorInboxState.ONBOARDED:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={"code": "NOT_APPROVED", "message": "Request is not approved yet."})
+
+    if req.pickup_verified_at is not None:
+        return {"ok": True, "pickup_verified_at": req.pickup_verified_at.isoformat()}
+
+    # Verify code against expected signature-derived code.
+    v = db.get(Vehicle, req.matched_vehicle_id) if req.matched_vehicle_id else None
+    vehicle_reg = v.registration_number if v else None
+    expected = pickup_qr_code(supply_request_id=req.id, operator_id=req.operator_id, vehicle_reg=vehicle_reg)
+    if code_in != expected:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail={"code": "INVALID_PICKUP_CODE", "message": "Pickup code does not match."})
+
+    req.pickup_verified_at = now
+    req.pickup_verified_by_user_id = verified_by_user_id
+    st.note = "Pickup verified (QR)."
+    st.updated_at = now
+    db.commit()
+    db.refresh(req)
+    return {"ok": True, "pickup_verified_at": req.pickup_verified_at.isoformat()}
 
 
 def _slugify(name: str) -> str:
@@ -46,7 +296,7 @@ def request_operator_otp(
     operator_name: str | None,
     operator_slug: str | None,
 ) -> OperatorOtpChallenge:
-    if settings.env != "dev":
+    if settings.env != "dev" and not settings.otp_dev_mode:
         missing = msg91_missing_fields()
         if missing:
             raise HTTPException(
@@ -102,8 +352,12 @@ def request_operator_otp(
     db.commit()
     db.refresh(ch)
 
+    if settings.env == "dev" or settings.otp_dev_mode:
+        setattr(ch, "_dev_otp", otp)
+        return ch
+
     ok, channel, debug = send_otp_best_effort(phone, otp)
-    if not ok and settings.env != "dev":
+    if not ok and settings.env != "dev" and not settings.otp_dev_mode:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={"code": "OTP_SEND_FAILED", "message": "Could not deliver OTP via configured channels.", "debug": debug},
@@ -272,6 +526,7 @@ def list_inbox(db: Session, *, operator_id: str, limit: int = 50) -> list[dict]:
                 "created_at": r.created_at.isoformat(),
                 "inbox_updated_at": (st.updated_at.isoformat() if st and st.updated_at else None),
                 "pickup_location": r.pickup_location,
+                "matched_vehicle_id": r.matched_vehicle_id,
                 "state": (st.state if st else OperatorInboxState.NEW),
                 "note": (st.note if st else None),
                 "rider": {
@@ -333,6 +588,7 @@ def get_inbox_request_detail(db: Session, *, operator_id: str, supply_request_id
         "pickup_location": req.pickup_location,
         "time_window": req.time_window,
         "requirements": req.requirements,
+        "matched_vehicle_id": req.matched_vehicle_id,
         "state": (st.state if st else OperatorInboxState.NEW),
         "note": (st.note if st else None),
         "rider": {
@@ -737,22 +993,41 @@ def assign_maintenance_ticket(
     return rec
 
 
-def _arena_centers() -> list[tuple[str, float, float]]:
-    # Pune clusters for demo realism
-    return [
-        ("Wakad", 18.5975, 73.7700),
-        ("Hinjewadi", 18.5960, 73.7400),
-        ("Chinchwad", 18.6290, 73.8000),
-        ("Kharadi", 18.5518, 73.9467),
-        ("Hadapsar", 18.5089, 73.9260),
-        ("Koregaon Park", 18.5362, 73.8940),
-        ("Baner", 18.5590, 73.7868),
+def _arena_centers(city: str | None = None) -> list[tuple[str, float, float]]:
+    """
+    Demo arena centers used for seeding vehicles + clustering summary.
+    If city is None/empty/"ALL", return combined list.
+    """
+    c = (city or "").strip().upper()
+    pune = [
+        ("Pune • Wakad", 18.5975, 73.7700),
+        ("Pune • Hinjewadi", 18.5960, 73.7400),
+        ("Pune • Chinchwad", 18.6290, 73.8000),
+        ("Pune • Kharadi", 18.5518, 73.9467),
+        ("Pune • Hadapsar", 18.5089, 73.9260),
+        ("Pune • Koregaon Park", 18.5362, 73.8940),
+        ("Pune • Baner", 18.5590, 73.7868),
     ]
+    blr = [
+        ("Bangalore • Indiranagar", 12.9719, 77.6412),
+        ("Bangalore • Koramangala", 12.9352, 77.6245),
+        ("Bangalore • HSR Layout", 12.9116, 77.6387),
+        ("Bangalore • Whitefield", 12.9698, 77.7500),
+        ("Bangalore • Marathahalli", 12.9569, 77.7011),
+        ("Bangalore • Hebbal", 13.0358, 77.5970),
+        ("Bangalore • Electronic City", 12.8440, 77.6630),
+    ]
+    if c in {"BLR", "BENGALURU", "BANGALORE"}:
+        return blr
+    if c in {"PUNE", "PNQ"}:
+        return pune
+    # default: combined (also used by summary to support mixed-city fleets)
+    return pune + blr
 
 
 def _pick_arena_for_point(lat: float, lon: float) -> str:
     best = None
-    for name, a_lat, a_lon in _arena_centers():
+    for name, a_lat, a_lon in _arena_centers("ALL"):
         d = (lat - a_lat) ** 2 + (lon - a_lon) ** 2
         if best is None or d < best[0]:
             best = (d, name)
@@ -830,7 +1105,8 @@ def dashboard_summary(db: Session, *, operator_id: str) -> dict:
         elif st == OperatorInboxState.REJECTED:
             inbox_rejected += 1
 
-    # Arena distribution based on last known location (or assume Pune center)
+    # Arena distribution based on last known location (fallback to Pune center if missing).
+    # Uses combined arena list so fleets can be demo-seeded in multiple cities.
     arena_buckets: dict[str, dict] = {}
     for v in vs:
         lat = float(v.last_lat) if v.last_lat is not None else 18.5204
@@ -878,17 +1154,18 @@ def dashboard_summary(db: Session, *, operator_id: str) -> dict:
     }
 
 
-def seed_demo_fleet(db: Session, *, operator_id: str, vehicles: int = 25) -> dict:
+def seed_demo_fleet(db: Session, *, operator_id: str, vehicles: int = 25, city: str = "PUNE") -> dict:
     # Create a realistic set of vehicles with varying status, locations, and maintenance.
     created = 0
     existing_regs = set(
         r[0] for r in db.query(Vehicle.registration_number).filter(Vehicle.operator_id == operator_id).all()
     )
-    centers = _arena_centers()
+    centers = _arena_centers(city)
     now = datetime.now(timezone.utc)
+    reg_prefix = "MH12EL" if (city or "").strip().upper() in {"PUNE", "PNQ"} else "KA01EL"
 
     for i in range(vehicles):
-        reg = f"MH12EL{random.randint(1000, 9999)}"
+        reg = f"{reg_prefix}{random.randint(1000, 9999)}"
         if reg in existing_regs:
             continue
         existing_regs.add(reg)
@@ -912,7 +1189,7 @@ def seed_demo_fleet(db: Session, *, operator_id: str, vehicles: int = 25) -> dic
             registration_number=reg,
             status=v_status,
             model=random.choice(["EV Scooter", "EV Bike", "EV Cargo"]),
-            meta=f'{{"arena":"{arena}","variant":"{random.choice(["S1","S2","C1"])}"}}',
+            meta=f'{{"arena":"{arena}","city":"{(city or "").strip().upper()}","variant":"{random.choice(["S1","S2","C1"])}"}}',
             last_lat=lat,
             last_lon=lon,
             last_telemetry_at=now - timedelta(minutes=random.randint(1, 180)),
@@ -973,6 +1250,7 @@ def reset_and_seed_demo_fleet(
     vehicles: int = 30,
     maintenance_ratio: float = 0.18,
     inactive_ratio: float = 0.08,
+    city: str = "PUNE",
 ) -> dict:
     """
     Hard reset demo fleet data (vehicles/devices/telemetry/maintenance) for an operator and reseed.
@@ -1005,9 +1283,10 @@ def reset_and_seed_demo_fleet(
     db.commit()
 
     # Reseed
-    centers = _arena_centers()
+    centers = _arena_centers(city)
     now = datetime.now(timezone.utc)
     created = 0
+    reg_prefix = "MH12EL" if (city or "").strip().upper() in {"PUNE", "PNQ"} else "KA01EL"
 
     n_inactive = int(round(vehicles * inactive_ratio))
     n_maint = int(round(vehicles * maintenance_ratio))
@@ -1019,7 +1298,7 @@ def reset_and_seed_demo_fleet(
     random.shuffle(statuses)
 
     for i in range(vehicles):
-        reg = f"MH12EL{random.randint(1000, 9999)}"
+        reg = f"{reg_prefix}{random.randint(1000, 9999)}"
         arena, a_lat, a_lon = random.choice(centers)
         lat = a_lat + random.uniform(-0.01, 0.01)
         lon = a_lon + random.uniform(-0.01, 0.01)
@@ -1032,7 +1311,7 @@ def reset_and_seed_demo_fleet(
             registration_number=reg,
             status=v_status,
             model=random.choice(["EV Scooter", "EV Bike", "EV Cargo"]),
-            meta=f'{{"arena":"{arena}","variant":"{random.choice(["S1","S2","C1"])}"}}',
+            meta=f'{{"arena":"{arena}","city":"{(city or "").strip().upper()}","variant":"{random.choice(["S1","S2","C1"])}"}}',
             last_lat=lat,
             last_lon=lon,
             last_telemetry_at=now - timedelta(minutes=random.randint(1, 180)),

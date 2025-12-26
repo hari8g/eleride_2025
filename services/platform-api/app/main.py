@@ -16,6 +16,8 @@ from app.domains.supply.router import router as supply_router
 from app.domains.operator_portal.router import router as operator_portal_router
 from app.domains.leasing_portal.router import router as leasing_portal_router
 from app.domains.matchmaking.router import router as matchmaking_router
+from app.domains.cashflow.router import router as cashflow_router
+from app.utils.sms import msg91_channels_available, msg91_missing_fields
 
 
 app = FastAPI(title=settings.app_name)
@@ -106,11 +108,34 @@ def _startup() -> None:
                 """
             )
         )
+        conn.execute(
+            text(
+                """
+                ALTER TABLE IF EXISTS supply_requests
+                ADD COLUMN IF NOT EXISTS pickup_verified_at TIMESTAMPTZ NULL;
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                ALTER TABLE IF EXISTS supply_requests
+                ADD COLUMN IF NOT EXISTS pickup_verified_by_user_id TEXT NULL;
+                """
+            )
+        )
 
 
 @app.get("/health")
 def health() -> dict:
-    return {"ok": True, "service": settings.app_name, "env": settings.env}
+    return {
+        "ok": True,
+        "service": settings.app_name,
+        "env": settings.env,
+        "otp_dev_mode": bool(settings.otp_dev_mode),
+        "msg91_missing": msg91_missing_fields(),
+        "msg91_channels": msg91_channels_available(),
+    }
 
 
 app.include_router(identity_router, tags=["identity"])
@@ -123,5 +148,6 @@ app.include_router(leasing_portal_router, tags=["leasing-portal"])
 app.include_router(matchmaking_router, tags=["matchmaking"])
 app.include_router(commitment_router, tags=["commitment-policy"])
 app.include_router(demand_ml_router, tags=["demand-ml-admin"])
+app.include_router(cashflow_router, tags=["cashflow"])
 
 

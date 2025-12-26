@@ -7,6 +7,14 @@ type Step = "auth" | "profile" | "kyc" | "location" | "demand" | "connect" | "do
 
 type Geo = { lat: number; lon: number; radius_km: 5 | 10 };
 
+type SelectedLaneMeta = {
+  lane_id: string;
+  qc_name?: string | null;
+  distance_km?: number | null;
+  lat?: number | null;
+  lon?: number | null;
+};
+
 function parseE164(phone: string | null | undefined): { cc: string; national: string } | null {
   if (!phone) return null;
   const m = phone.trim().match(/^\+(\d{1,3})(\d{6,14})$/);
@@ -29,6 +37,42 @@ function buildE164(cc: string, national: string) {
 function fmtHHmm(d: Date) {
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function fmtDurationShort(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  const m = Math.floor(s / 60);
+  const h = Math.floor(m / 60);
+  const mm = m % 60;
+  const ss = s % 60;
+  if (h > 0) return `${h}h ${mm}m`;
+  if (m > 0) return `${m}m ${ss}s`;
+  return `${ss}s`;
+}
+
+function fmtAgo(tsIso: string | null | undefined): string {
+  if (!tsIso) return "—";
+  const t = new Date(tsIso).getTime();
+  if (!Number.isFinite(t)) return "—";
+  const d = Date.now() - t;
+  if (d < 45_000) return "just now";
+  const m = Math.round(d / 60_000);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.round(d / 3_600_000);
+  if (h < 24) return `${h}h ago`;
+  const days = Math.round(d / 86_400_000);
+  return `${days}d ago`;
+}
+
+function stableHashInt(s: string): number {
+  // Deterministic, lightweight hash for "realistic" ETA that doesn't jump around on refresh.
+  // Not cryptographic.
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
 }
 
 function dayLabel(d: Date) {
@@ -108,6 +152,17 @@ function buildOsmEmbed(lat: number, lon: number) {
   return `https://www.openstreetmap.org/export/embed.html?bbox=${left}%2C${bottom}%2C${right}%2C${top}&layer=mapnik&marker=${marker}`;
 }
 
+function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 6371.0;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLon = ((lon2 - lon1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+
 function nextFromStatus(status: RiderStatus | null): Step {
   if (!status) return "auth";
   if (status === "NEW") return "profile";
@@ -137,7 +192,7 @@ export function RiderApp() {
   const [notifState, setNotifState] = useState<"unknown" | "granted" | "denied" | "default">("unknown");
 
   // Auth
-  const [countryCode, setCountryCode] = useState<string>(() => parsedSessionPhone?.cc ?? "+91");
+  const countryCode = "+91"; // Simplified UI: IN only for now
   const [phoneDigits, setPhoneDigits] = useState<string>(() => parsedSessionPhone?.national ?? "9999000010");
   const phoneE164 = useMemo(() => buildE164(countryCode, phoneDigits), [countryCode, phoneDigits]);
   const [otpRequestId, setOtpRequestId] = useState<string>("");
@@ -156,11 +211,20 @@ export function RiderApp() {
   // Location
   const [geo, setGeo] = useState<Geo>({ lat: 18.5204, lon: 73.8567, radius_km: 10 });
   const [geoReady, setGeoReady] = useState(false);
+  const [demoCity, setDemoCity] = useState<"PUNE" | "BANGALORE">(() => (localStorage.getItem("eleride.rider.demo_city") as any) || "PUNE");
 
   // Demand
   const [demand, setDemand] = useState<DemandCard[] | null>(null);
   const [demandPolicy, setDemandPolicy] = useState<any | null>(null);
   const [selectedLaneId, setSelectedLaneId] = useState<string>("");
+  const [selectedLaneMeta, setSelectedLaneMeta] = useState<SelectedLaneMeta | null>(() => {
+    try {
+      const raw = localStorage.getItem("eleride.rider.selected_lane");
+      return raw ? (JSON.parse(raw) as SelectedLaneMeta) : null;
+    } catch {
+      return null;
+    }
+  });
 
   // Connect
   const [connectResult, setConnectResult] = useState<null | {
@@ -172,6 +236,8 @@ export function RiderApp() {
   const [trackingReqId, setTrackingReqId] = useState<string>(() => localStorage.getItem("eleride.rider.last_request_id") || "");
   const [supplyStatus, setSupplyStatus] = useState<null | Awaited<ReturnType<typeof api.supplyStatus>>>(null);
   const [trackingBusy, setTrackingBusy] = useState(false);
+  const [clockNow, setClockNow] = useState<number>(() => Date.now());
+  const [trackingGeo, setTrackingGeo] = useState<Geo | null>(null);
   const [remindTimer, setRemindTimer] = useState<number | null>(null);
   const [slotBaseMs, setSlotBaseMs] = useState<number>(() => ceilToNextHourEpochMs(new Date()));
   const [pickupStartMs, setPickupStartMs] = useState<number>(() => ceilToNextHourEpochMs(new Date()));
@@ -217,6 +283,24 @@ export function RiderApp() {
     if (!session?.token) return;
     const s = await api.riderStatus(session.token);
     setStatus({ rider_id: s.rider_id, phone: s.phone, status: s.status });
+  }
+
+  async function resumeIfPendingPickup(token: string): Promise<boolean> {
+    try {
+      const s = await api.supplyStatus(token, null);
+      const code = s.stage?.code ?? "";
+      const pending = (code === "sent" || code === "verification" || code === "approved") && !s.pickup_verified_at;
+      if (pending) {
+        localStorage.setItem("eleride.rider.last_request_id", s.request_id);
+        setTrackingReqId(s.request_id);
+        setSupplyStatus(s as any);
+        setStep("tracking");
+        return true;
+      }
+      return false;
+    } catch {
+      return false;
+    }
   }
 
   useEffect(() => {
@@ -279,7 +363,6 @@ export function RiderApp() {
     // Keep auth inputs in sync when session changes (sign-in/out)
     const p = parseE164(session?.phone ?? null);
     if (p) {
-      setCountryCode(p.cc);
       setPhoneDigits(p.national);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -350,6 +433,35 @@ export function RiderApp() {
   }, [step, session?.token, trackingReqId]);
 
   useEffect(() => {
+    // When pickup is verified, close out the sticky workflow and stop "resuming" into it on next login.
+    if (step !== "tracking") return;
+    if (!supplyStatus?.pickup_verified_at) return;
+    localStorage.removeItem("eleride.rider.last_request_id");
+    setToast("See you soon");
+  }, [step, supplyStatus?.pickup_verified_at]);
+
+  useEffect(() => {
+    // Separate 1s tick for countdown UI (ETA). Avoids coupling to API polling interval.
+    if (step !== "tracking") return;
+    const t = window.setInterval(() => setClockNow(Date.now()), 1000);
+    return () => window.clearInterval(t);
+  }, [step]);
+
+  useEffect(() => {
+    // When approved, try to fetch current location for a realistic pickup ETA.
+    if (step !== "tracking") return;
+    if (supplyStatus?.stage?.code !== "approved") return;
+    if (!navigator.geolocation) return;
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setTrackingGeo({ lat: pos.coords.latitude, lon: pos.coords.longitude, radius_km: 10 });
+      },
+      () => null,
+      { enableHighAccuracy: true, timeout: 6000, maximumAge: 30_000 },
+    );
+  }, [step, supplyStatus?.stage?.code]);
+
+  useEffect(() => {
     // When user enters connect step, refresh the time slots so they’re relevant “right now”.
     if (step !== "connect") return;
     const base = ceilToNextHourEpochMs(new Date());
@@ -416,7 +528,6 @@ export function RiderApp() {
           {step === "auth" ? (
             <>
               <div className="hero">
-                <img className="heroLogo" src={logoPng} alt="Eleride" />
                 <div className="title">Welcome</div>
                 <p className="subtitle">Sign in with your phone number to continue.</p>
               </div>
@@ -442,11 +553,7 @@ export function RiderApp() {
                       <div className="row">
                         <div style={{ width: 110 }}>
                           <label>Country</label>
-                          <select value={countryCode} onChange={(e) => setCountryCode(e.target.value)}>
-                            <option value="+91">+91 (IN)</option>
-                            <option value="+1">+1 (US)</option>
-                            <option value="+44">+44 (UK)</option>
-                          </select>
+                          <input value="+91 (IN)" disabled />
                         </div>
                         <div style={{ flex: 1, minWidth: 200 }}>
                           <label>Number</label>
@@ -505,7 +612,9 @@ export function RiderApp() {
                             setOtpRequestId("");
                             const s = await api.riderStatus(next.token);
                             setStatus({ rider_id: s.rider_id, phone: s.phone, status: s.status });
-                            setStep(nextFromStatus(s.status));
+                          // If user is mid-pickup flow, always resume tracking (sticky until QR verified).
+                          const resumed = await resumeIfPendingPickup(next.token);
+                          if (!resumed) setStep(nextFromStatus(s.status));
                           })
                         }
                       >
@@ -702,13 +811,35 @@ export function RiderApp() {
                       className="btn btnSecondary"
                       disabled={busy}
                       onClick={() => {
-                        setGeo({ lat: 18.5204, lon: 73.8567, radius_km: geo.radius_km });
+                        const isBlr = demoCity === "BANGALORE";
+                        const next = isBlr ? { lat: 12.9716, lon: 77.5946 } : { lat: 18.5204, lon: 73.8567 };
+                        setGeo({ lat: next.lat, lon: next.lon, radius_km: geo.radius_km });
                         setGeoReady(true);
-                        setLocationHint("Using Pune demo location.");
+                        setLocationHint(`Using ${isBlr ? "Bangalore" : "Pune"} demo location.`);
+                        localStorage.setItem("eleride.rider.demo_city", demoCity);
+                        setProfile((p) => ({
+                          ...p,
+                          address: isBlr ? "Bangalore" : "Pune",
+                          preferred_zones: isBlr ? ["Koramangala", "HSR Layout"] : ["Hadapsar", "Kharadi"],
+                        }));
                       }}
                     >
-                      Use Pune demo
+                      Use {demoCity === "BANGALORE" ? "Bangalore" : "Pune"} demo
                     </button>
+                    <select
+                      className="input"
+                      style={{ maxWidth: 160 }}
+                      value={demoCity}
+                      onChange={(e) => {
+                        const v = (e.target.value as any) || "PUNE";
+                        setDemoCity(v);
+                        localStorage.setItem("eleride.rider.demo_city", v);
+                      }}
+                      title="Demo city"
+                    >
+                      <option value="PUNE">Pune</option>
+                      <option value="BANGALORE">Bangalore</option>
+                    </select>
                   </div>
 
                   <div className="row">
@@ -774,9 +905,25 @@ export function RiderApp() {
                       onClick={() =>
                         run(async () => {
                           const res = await api.demandNearby(session!.token, geo.lat, geo.lon, geo.radius_km);
-                          setDemand(res.cards ?? []);
-                        setDemandPolicy(res.policy ?? null);
-                          if ((res.cards ?? []).length === 1) setSelectedLaneId(res.cards[0].lane_id);
+                          const cards = res.cards ?? [];
+                          setDemand(cards);
+                          setDemandPolicy(res.policy ?? null);
+                          if (cards.length === 1) setSelectedLaneId(cards[0].lane_id);
+
+                          // Persist the selected store (name + distance) so it can be shown during onboarding/tracking.
+                          const chosenId = (cards.length === 1 ? cards[0].lane_id : selectedLaneId) || "";
+                          const found = (chosenId ? cards.find((c) => c.lane_id === chosenId) : null) || cards[0] || null;
+                          if (found) {
+                            const meta: SelectedLaneMeta = {
+                              lane_id: found.lane_id,
+                              qc_name: found.qc_name,
+                              distance_km: found.distance_km,
+                              lat: (found as any).lat ?? null,
+                              lon: (found as any).lon ?? null,
+                            };
+                            setSelectedLaneMeta(meta);
+                            localStorage.setItem("eleride.rider.selected_lane", JSON.stringify(meta));
+                          }
                         })
                       }
                     >
@@ -824,7 +971,18 @@ export function RiderApp() {
                             type="radio"
                             name="lane"
                             checked={selectedLaneId === c.lane_id}
-                            onChange={() => setSelectedLaneId(c.lane_id)}
+                            onChange={() => {
+                              setSelectedLaneId(c.lane_id);
+                              const meta: SelectedLaneMeta = {
+                                lane_id: c.lane_id,
+                                qc_name: c.qc_name,
+                                distance_km: c.distance_km,
+                                lat: (c as any).lat ?? null,
+                                lon: (c as any).lon ?? null,
+                              };
+                              setSelectedLaneMeta(meta);
+                              localStorage.setItem("eleride.rider.selected_lane", JSON.stringify(meta));
+                            }}
                             style={{ position: "absolute", opacity: 0, pointerEvents: "none" }}
                           />
 
@@ -843,6 +1001,15 @@ export function RiderApp() {
                                 onClick={(e) => {
                                   e.preventDefault();
                                   setSelectedLaneId(c.lane_id);
+                                  const meta: SelectedLaneMeta = {
+                                    lane_id: c.lane_id,
+                                    qc_name: c.qc_name,
+                                    distance_km: c.distance_km,
+                                    lat: (c as any).lat ?? null,
+                                    lon: (c as any).lon ?? null,
+                                  };
+                                  setSelectedLaneMeta(meta);
+                                  localStorage.setItem("eleride.rider.selected_lane", JSON.stringify(meta));
                                 }}
                               >
                                 {selectedLaneId === c.lane_id ? "Selected" : "Select"}
@@ -902,7 +1069,13 @@ export function RiderApp() {
 
               <div className="card stack">
                 <div className="helper">
-                  Selected lane: <b>{selectedLaneId || "—"}</b>
+                  Selected store: <b>{selectedLaneMeta?.qc_name ?? (selectedLaneId || "—")}</b>
+                  {selectedLaneMeta?.distance_km != null ? (
+                    <>
+                      {" "}
+                      • Distance: <b>{Number(selectedLaneMeta.distance_km).toFixed(1)} km</b>
+                    </>
+                  ) : null}
                 </div>
 
                 <div>
@@ -971,15 +1144,31 @@ export function RiderApp() {
                   disabled={busy || !session?.token || !selectedLaneId}
                   onClick={() =>
                     run(async () => {
-                      const res = await api.supplyConnect(session!.token, {
-                        lane_id: selectedLaneId,
-                        time_window: selectedTimeWindowLabel,
-                        requirements: composedRequirements || null,
-                        rider_lat: geo.lat,
-                        rider_lon: geo.lon,
-                      });
-                      setConnectResult(res);
-                      setStep("done");
+                      try {
+                        const res = await api.supplyConnect(session!.token, {
+                          lane_id: selectedLaneId,
+                          time_window: selectedTimeWindowLabel,
+                          requirements: composedRequirements || null,
+                          rider_lat: geo.lat,
+                          rider_lon: geo.lon,
+                        });
+                        setConnectResult(res);
+                        setStep("done");
+                      } catch (e) {
+                        // If user already has an in-progress request (same phone), resume tracking instead of creating another.
+                        if (e instanceof HttpError && e.status === 409) {
+                          const body = e.body as any;
+                          if (body?.detail?.code === "ACTIVE_REQUEST_EXISTS" && body?.detail?.request_id) {
+                            const reqId = String(body.detail.request_id);
+                            localStorage.setItem("eleride.rider.last_request_id", reqId);
+                            setTrackingReqId(reqId);
+                            setToast("You already have an active request. Resuming status tracking.");
+                            setStep("tracking");
+                            return;
+                          }
+                        }
+                        throw e;
+                      }
                     })
                   }
                 >
@@ -1006,6 +1195,17 @@ export function RiderApp() {
                   </div>
 
                   <div className="tag">{connectResult.operator.name}</div>
+                  {selectedLaneMeta?.lane_id ? (
+                    <div className="helper">
+                      Demand store: <b>{selectedLaneMeta.qc_name ?? selectedLaneMeta.lane_id}</b>
+                      {selectedLaneMeta.distance_km != null ? (
+                        <>
+                          {" "}
+                          • Distance: <b>{Number(selectedLaneMeta.distance_km).toFixed(1)} km</b>
+                        </>
+                      ) : null}
+                    </div>
+                  ) : null}
 
                   <div className="nextSteps">
                     <div className="nextTitle">What happens next</div>
@@ -1122,15 +1322,150 @@ export function RiderApp() {
                       <div className="metricValue">{supplyStatus?.pickup_location ?? connectResult?.operator.pickup_location ?? "—"}</div>
                     </div>
                     <div className="metric">
-                      <div className="metricLabel">Request ID</div>
-                      <div className="metricValue">{(trackingReqId || supplyStatus?.request_id || "—").slice(0, 8)}…</div>
+                      <div className="metricLabel">Demand store</div>
+                      <div className="metricValue">
+                        {selectedLaneMeta?.qc_name ?? selectedLaneMeta?.lane_id ?? "—"}
+                        {selectedLaneMeta?.distance_km != null ? ` • ${Number(selectedLaneMeta.distance_km).toFixed(1)} km` : ""}
+                      </div>
+                    </div>
+                    <div className="metric">
+                      <div className="metricLabel">Expected confirmation</div>
+                      <div className="metricValue">
+                        {(() => {
+                          const s = supplyStatus;
+                          if (!s?.request_id) return "—";
+                          const code = s.stage?.code ?? "sent";
+                          if (code === "approved") return "Confirmed";
+                          if (code === "rejected") return "Not available";
+
+                          const createdAtMs = new Date(s.created_at).getTime();
+                          const lastMs = new Date((s.inbox_updated_at || s.created_at) as string).getTime();
+                          const baseMs = Number.isFinite(lastMs) ? lastMs : Number.isFinite(createdAtMs) ? createdAtMs : Date.now();
+
+                          // Deterministic "as realistic as possible" SLA windows (minutes), stable per request.
+                          const h = stableHashInt(s.request_id);
+                          const sentToVerifyMin = 3 + (h % 5); // 3..7
+                          const verifyToApproveMin = 10 + ((h >>> 8) % 16); // 10..25
+
+                          const verifyStartMs = createdAtMs + sentToVerifyMin * 60_000;
+                          const approveByMs = verifyStartMs + verifyToApproveMin * 60_000;
+
+                          // If already in verification, start from last update for smoother UX.
+                          const targetMs = code === "verification" ? baseMs + Math.max(6, Math.min(18, verifyToApproveMin)) * 60_000 : approveByMs;
+                          const remaining = targetMs - clockNow;
+
+                          if (remaining <= 0) return "Any moment now";
+                          return `~${fmtDurationShort(remaining)}`;
+                        })()}
+                      </div>
                     </div>
                     <div className="metric">
                       <div className="metricLabel">Last update</div>
-                      <div className="metricValue">{supplyStatus?.inbox_updated_at ? new Date(supplyStatus.inbox_updated_at).toLocaleString() : "—"}</div>
+                      <div className="metricValue">
+                        {(() => {
+                          const s = supplyStatus;
+                          if (!s) return "—";
+                          const ts = s.inbox_updated_at || s.created_at;
+                          const when = ts ? new Date(ts).toLocaleString() : "—";
+                          const stage = s.stage?.label ?? "Status";
+                          const ago = fmtAgo(ts);
+                          return `${stage} • ${when} (${ago})`;
+                        })()}
+                      </div>
                     </div>
                   </div>
                 </div>
+
+                {supplyStatus?.stage?.code === "approved" ? (
+                  <>
+                    <div className="divider" />
+                    <div className="card stack" style={{ boxShadow: "none", background: "rgba(255,255,255,0.02)" }}>
+                      <div style={{ fontWeight: 1000 }}>Pickup instructions</div>
+                      <div className="helper">
+                        Show this QR at the pickup hub for vehicle handover.
+                        {supplyStatus?.matched_vehicle_registration_number ? (
+                          <>
+                            {" "}
+                            Assigned vehicle: <b>{supplyStatus.matched_vehicle_registration_number}</b>.
+                          </>
+                        ) : null}
+                      </div>
+
+                      {supplyStatus?.pickup_qr_png_base64 ? (
+                        <div className="row" style={{ justifyContent: "center" }}>
+                          <img
+                            alt="Pickup QR"
+                            style={{ width: 220, height: 220, borderRadius: 12, background: "#fff", padding: 10 }}
+                            src={`data:image/png;base64,${supplyStatus.pickup_qr_png_base64}`}
+                          />
+                        </div>
+                      ) : (
+                        <div className="helper">QR is being generated…</div>
+                      )}
+
+                      {supplyStatus?.pickup_qr_code ? (
+                        <div className="helper" style={{ textAlign: "center" }}>
+                          Pickup code: <b>{supplyStatus.pickup_qr_code}</b>
+                        </div>
+                      ) : null}
+
+                      {supplyStatus?.pickup_lat != null && supplyStatus?.pickup_lon != null ? (
+                        <>
+                          <div className="divider" />
+                          <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
+                            <div>
+                              <div className="helper">ETA to pickup hub</div>
+                              <div style={{ fontWeight: 1000 }}>
+                                {(() => {
+                                  const cur = trackingGeo ?? geo;
+                                  const km = haversineKm(cur.lat, cur.lon, supplyStatus.pickup_lat!, supplyStatus.pickup_lon!);
+                                  // realistic scooter/city speed + small buffer
+                                  const speedKph = 18;
+                                  const mins = Math.max(2, Math.round((km / speedKph) * 60 + 3));
+                                  return `≈ ${mins} min (${km.toFixed(1)} km)`;
+                                })()}
+                              </div>
+                            </div>
+                            <button
+                              className="btn btnSecondary"
+                              type="button"
+                              onClick={() => {
+                                if (!navigator.geolocation) return setToast("Geolocation not supported.");
+                                navigator.geolocation.getCurrentPosition(
+                                  (pos) => setTrackingGeo({ lat: pos.coords.latitude, lon: pos.coords.longitude, radius_km: 10 }),
+                                  () => setToast("Could not get current location."),
+                                  { enableHighAccuracy: true, timeout: 9000, maximumAge: 0 },
+                                );
+                              }}
+                            >
+                              Update location
+                            </button>
+                          </div>
+
+                          <div className="mapFrame" style={{ marginTop: 10 }}>
+                            <iframe title="pickup-map" src={buildOsmEmbed(supplyStatus.pickup_lat!, supplyStatus.pickup_lon!)} loading="lazy" />
+                          </div>
+                          <div className="row">
+                            <a
+                              className="btn btnPrimary"
+                              href={`https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(
+                                String((trackingGeo ?? geo).lat),
+                              )},${encodeURIComponent(String((trackingGeo ?? geo).lon))}&destination=${encodeURIComponent(
+                                String(supplyStatus.pickup_lat),
+                              )},${encodeURIComponent(String(supplyStatus.pickup_lon))}&travelmode=driving`}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              Open directions
+                            </a>
+                          </div>
+                        </>
+                      ) : (
+                        <div className="helper">Pickup hub location is loading…</div>
+                      )}
+                    </div>
+                  </>
+                ) : null}
 
                 {(() => {
                   const code = supplyStatus?.stage?.code ?? "sent";
@@ -1179,63 +1514,79 @@ export function RiderApp() {
                   );
                 })()}
 
-                <div className="divider" />
-                <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
-                  <div className="helper">Notifications</div>
-                  <button
-                    className="btn btnSecondary"
-                    type="button"
-                    disabled={!("Notification" in window)}
-                    onClick={async () => {
-                      try {
-                        const N = (window as any).Notification;
-                        if (!N) return setToast("Notifications not supported on this device.");
-                        const p = await N.requestPermission();
-                        setNotifState(p);
-                        if (p === "granted") setToast("Notifications enabled.");
-                        else if (p === "denied") setToast("Notifications blocked. Enable them in browser settings.");
-                      } catch {
-                        setToast("Could not enable notifications.");
-                      }
-                    }}
-                  >
-                    {notifState === "granted" ? "Enabled" : "Enable"}
+                {supplyStatus?.pickup_verified_at || supplyStatus?.stage?.code === "completed" ? (
+                  <div className="card stack" style={{ boxShadow: "none", background: "rgba(255,255,255,0.02)" }}>
+                    <div className="title" style={{ fontSize: 16 }}>See you soon</div>
+                    <div className="helper">Pickup has been verified. Your onboarding is complete.</div>
+                    <button className="btn btnDanger" onClick={signOut}>
+                      Sign out
+                    </button>
+                  </div>
+                ) : supplyStatus?.stage?.code === "approved" && !supplyStatus?.pickup_verified_at ? (
+                  <button className="btn btnDanger" onClick={signOut}>
+                    Sign out
                   </button>
-                </div>
-
-                <div className="row">
-                  <button
-                    className="btn btnSecondary"
-                    type="button"
-                    disabled={remindTimer != null}
-                    onClick={() => {
-                      if (remindTimer) window.clearTimeout(remindTimer);
-                      const t = window.setTimeout(() => {
-                        setToast("Reminder: check your onboarding status.");
-                        try {
-                          const N = (window as any).Notification;
-                          if (N && N.permission === "granted") {
-                            new N("Eleride: Reminder", { body: "Check your onboarding status updates." });
+                ) : (
+                  <>
+                    <div className="divider" />
+                    <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
+                      <div className="helper">Notifications</div>
+                      <button
+                        className="btn btnSecondary"
+                        type="button"
+                        disabled={!("Notification" in window)}
+                        onClick={async () => {
+                          try {
+                            const N = (window as any).Notification;
+                            if (!N) return setToast("Notifications not supported on this device.");
+                            const p = await N.requestPermission();
+                            setNotifState(p);
+                            if (p === "granted") setToast("Notifications enabled.");
+                            else if (p === "denied") setToast("Notifications blocked. Enable them in browser settings.");
+                          } catch {
+                            setToast("Could not enable notifications.");
                           }
-                        } catch {
-                          // ignore
-                        }
-                        setRemindTimer(null);
-                      }, 10 * 60 * 1000);
-                      setRemindTimer(t);
-                      setToast("Okay — we’ll remind you in 10 minutes (while the app is open).");
-                    }}
-                  >
-                    Remind me
-                  </button>
-                  <button className="btn btnPrimary" onClick={() => setStep("demand")}>
-                    Explore demand
-                  </button>
-                </div>
+                        }}
+                      >
+                        {notifState === "granted" ? "Enabled" : "Enable"}
+                      </button>
+                    </div>
 
-                <button className="btn btnDanger" onClick={signOut}>
-                  Sign out
-                </button>
+                    <div className="row">
+                      <button
+                        className="btn btnSecondary"
+                        type="button"
+                        disabled={remindTimer != null}
+                        onClick={() => {
+                          if (remindTimer) window.clearTimeout(remindTimer);
+                          const t = window.setTimeout(() => {
+                            setToast("Reminder: check your onboarding status.");
+                            try {
+                              const N = (window as any).Notification;
+                              if (N && N.permission === "granted") {
+                                new N("Eleride: Reminder", { body: "Check your onboarding status updates." });
+                              }
+                            } catch {
+                              // ignore
+                            }
+                            setRemindTimer(null);
+                          }, 10 * 60 * 1000);
+                          setRemindTimer(t);
+                          setToast("Okay — we’ll remind you in 10 minutes (while the app is open).");
+                        }}
+                      >
+                        Remind me
+                      </button>
+                      <button className="btn btnPrimary" onClick={() => setStep("demand")}>
+                        Explore demand
+                      </button>
+                    </div>
+
+                    <button className="btn btnDanger" onClick={signOut}>
+                      Sign out
+                    </button>
+                  </>
+                )}
               </div>
             </>
           ) : null}

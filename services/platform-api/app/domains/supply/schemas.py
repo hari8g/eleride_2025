@@ -33,10 +33,18 @@ class RiderSupplyStatusOut(BaseModel):
     operator_id: str | None = None
     operator_name: str | None = None
     pickup_location: str | None = None
+    pickup_lat: float | None = None
+    pickup_lon: float | None = None
 
     matched_vehicle_id: str | None = None
+    matched_vehicle_registration_number: str | None = None
     matched_score: float | None = None
     matched_reasons: list[str] | None = None
+
+    # Present only when approved (ONBOARDED): QR to be scanned at pickup for handover.
+    pickup_qr_png_base64: str | None = None
+    pickup_qr_code: str | None = None
+    pickup_verified_at: str | None = None
 
     inbox_state: str
     inbox_note: str | None = None

@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Payslips – Cashflow Underwriting Engine</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <img class="brand-logo" src="assets/eleride_logo.jpeg" alt="eleRide" />
+        <div>
+          <div class="title">Cashflow Underwriting Engine</div>
+          <div class="subtitle">Payslips (load weekly XLSX → render per rider → download PDF)</div>
+        </div>
+      </div>
+      <nav class="nav">
+        <a class="nav-link" href="index.html">Dashboard</a>
+        <a class="nav-link" href="scenarios.html">Scenarios</a>
+        <a class="nav-link active" href="payslips.html">Payslips</a>
+      </nav>
+      <div class="meta">
+        <div id="statusPill" class="pill">Ready</div>
+        <button id="reloadBtn" class="btn">Reload</button>
+      </div>
+    </header>
+
+    <main class="container">
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Select file & rider</h2>
+          <div class="muted">Loads from server `Data/` folder via API.</div>
+        </div>
+        <div class="filters" style="grid-template-columns: 2fr 2fr 1fr;">
+          <div class="field">
+            <label for="fileSel">Weekly payout file (.xlsx)</label>
+            <select id="fileSel"></select>
+          </div>
+          <div class="field">
+            <label for="riderSel">Rider</label>
+            <select id="riderSel"></select>
+          </div>
+          <div class="field">
+            <label>&nbsp;</label>
+            <button id="pdfBtn" class="btn">Download PDF</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Payslip</h2>
+          <div id="payslipMeta" class="muted"></div>
+        </div>
+        <div id="payslipView" class="doc"></div>
+      </section>
+    </main>
+
+    <script src="payslips.js"></script>
+  </body>
+</html>
+
+

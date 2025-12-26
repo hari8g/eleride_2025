@@ -37,7 +37,7 @@ def request_lessor_otp(
     lessor_name: str | None,
     lessor_slug: str | None,
 ) -> LessorOtpChallenge:
-    if settings.env != "dev":
+    if settings.env != "dev" and not settings.otp_dev_mode:
         missing = msg91_missing_fields()
         if missing:
             raise HTTPException(
@@ -85,8 +85,12 @@ def request_lessor_otp(
     db.commit()
     db.refresh(ch)
 
+    if settings.env == "dev" or settings.otp_dev_mode:
+        setattr(ch, "_dev_otp", otp)
+        return ch
+
     ok, channel, debug = send_otp_best_effort(phone, otp)
-    if not ok and settings.env != "dev":
+    if not ok and settings.env != "dev" and not settings.otp_dev_mode:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={"code": "OTP_SEND_FAILED", "message": "Could not deliver OTP via configured channels.", "debug": debug},

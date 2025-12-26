@@ -48,6 +48,28 @@ docker compose up --build
 
 - `http://localhost:18080/docs`
 
+## Local dev (backend + all frontends)
+
+This starts Postgres + Redis + API (Docker) and all Vite apps (Node) with the API base set to `http://localhost:18080`.
+
+```bash
+./scripts/dev-local.sh
+```
+
+### Dev OTP (recommended for local)
+
+In `env.local`, set:
+
+```bash
+OTP_DEV_MODE=true
+```
+
+To stop the backend containers:
+
+```bash
+./scripts/dev-stop.sh
+```
+
 ## Rider App (prod-style demo UI)
 
 Start the rider app:

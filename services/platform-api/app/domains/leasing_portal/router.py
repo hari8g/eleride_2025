@@ -39,7 +39,7 @@ def lessor_otp_request(payload: LessorOtpRequestIn, db: Session = Depends(get_db
         lessor_name=payload.lessor_name,
         lessor_slug=payload.lessor_slug,
     )
-    dev_otp = getattr(ch, "_dev_otp", None) if settings.env == "dev" else None
+    dev_otp = getattr(ch, "_dev_otp", None) if (settings.env == "dev" or settings.otp_dev_mode) else None
     return LessorOtpRequestOut(request_id=ch.id, expires_in_seconds=settings.otp_ttl_seconds, dev_otp=dev_otp)
 
 

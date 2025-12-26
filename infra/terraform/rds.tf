@@ -24,9 +24,9 @@ resource "aws_db_instance" "postgres" {
   publicly_accessible = false
   multi_az            = true
 
-  backup_retention_period = 7
-  deletion_protection     = true
-  skip_final_snapshot     = false
+  backup_retention_period   = 7
+  deletion_protection       = true
+  skip_final_snapshot       = false
   final_snapshot_identifier = "${var.name}-postgres-final"
 
   storage_encrypted = true
@@ -36,7 +36,8 @@ resource "aws_db_instance" "postgres" {
 
 locals {
   # SQLAlchemy URL format expected by platform-api.
-  database_url = "postgresql+psycopg://${var.db_username}:${var.db_password}@${aws_db_instance.postgres.address}:${aws_db_instance.postgres.port}/${var.db_name}"
+  # IMPORTANT: URL-encode password so special chars (e.g. '#', ':') don't break URL parsing.
+  database_url = "postgresql+psycopg://${var.db_username}:${urlencode(var.db_password)}@${aws_db_instance.postgres.address}:${aws_db_instance.postgres.port}/${var.db_name}"
 }
 
 

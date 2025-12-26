@@ -26,6 +26,7 @@ export type InboxItem = {
   created_at: string;
   inbox_updated_at?: string | null;
   pickup_location?: string | null;
+  matched_vehicle_id?: string | null;
   state: "NEW" | "CONTACTED" | "ONBOARDED" | "REJECTED";
   note?: string | null;
   rider: {
@@ -45,6 +46,7 @@ export type InboxDetail = {
   pickup_location?: string | null;
   time_window?: string | null;
   requirements?: string | null;
+  matched_vehicle_id?: string | null;
   state: InboxItem["state"];
   note?: string | null;
   rider: {
@@ -57,6 +59,11 @@ export type InboxDetail = {
     preferred_zones?: string[] | null;
     status: string;
   };
+};
+
+export type PickupVerifyOut = {
+  ok: boolean;
+  pickup_verified_at: string;
 };
 
 export type Vehicle = {
@@ -146,11 +153,14 @@ export const api = {
       arenas: { name: string; vehicles_total: number; vehicles_active: number; vehicles_in_maintenance: number; avg_battery_pct?: number | null }[];
     }>("/operator/dashboard/summary", { token }),
 
-  seedDemo: (token: string, vehicles: number) =>
-    http<{ ok: boolean; vehicles_created: number }>(`/operator/admin/seed-demo?vehicles=${encodeURIComponent(vehicles)}`, {
+  seedDemo: (token: string, vehicles: number, city: string) =>
+    http<{ ok: boolean; vehicles_created: number }>(
+      `/operator/admin/seed-demo?vehicles=${encodeURIComponent(vehicles)}&city=${encodeURIComponent(city)}`,
+      {
       method: "POST",
       token,
-    }),
+      },
+    ),
 
   inboxList: (token: string) => http<{ items: InboxItem[] }>("/operator/inbox/requests", { token }),
 
@@ -162,6 +172,26 @@ export const api = {
       method: "POST",
       token,
       body: JSON.stringify(payload),
+    }),
+
+  inboxAcceptAutoAssign: (token: string, supply_request_id: string) =>
+    http<{
+      ok: boolean;
+      state: InboxItem["state"];
+      matched_vehicle_id: string;
+      matched_vehicle_registration_number: string;
+      matched_score?: number | null;
+      matched_reasons?: string[] | null;
+    }>(`/operator/inbox/requests/${encodeURIComponent(supply_request_id)}/accept`, {
+      method: "POST",
+      token,
+    }),
+
+  pickupVerify: (token: string, supply_request_id: string, pickup_code: string) =>
+    http<PickupVerifyOut>(`/operator/inbox/requests/${encodeURIComponent(supply_request_id)}/pickup/verify`, {
+      method: "POST",
+      token,
+      body: JSON.stringify({ pickup_code }),
     }),
 
   vehiclesList: (token: string) => http<{ items: Vehicle[] }>("/operator/vehicles", { token }),
