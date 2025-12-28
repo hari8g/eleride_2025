@@ -45,6 +45,10 @@ class RiderSupplyStatusOut(BaseModel):
     pickup_qr_png_base64: str | None = None
     pickup_qr_code: str | None = None
     pickup_verified_at: str | None = None
+    
+    # Contract URL (generated when pickup is verified)
+    contract_url: str | None = None
+    signed_contract_url: str | None = None  # Signed contract URL
 
     inbox_state: str
     inbox_note: str | None = None

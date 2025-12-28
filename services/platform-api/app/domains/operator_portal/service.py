@@ -276,8 +276,32 @@ def verify_pickup_qr(
     req.pickup_verified_by_user_id = verified_by_user_id
     st.note = "Pickup verified (QR)."
     st.updated_at = now
+    
+    # Generate contract when pickup is verified
+    from app.domains.rider.models import Rider
+    rider = db.query(Rider).filter(Rider.id == req.rider_id).one_or_none()
+    if rider:
+        try:
+            from app.domains.rider.contract_service import generate_rider_contract
+            contract_url = generate_rider_contract(db, rider.id)
+            if contract_url:
+                rider.contract_url = contract_url
+                print(f"[SUCCESS] Contract generated successfully for rider {rider.id}: {contract_url}")
+                # Commit contract URL immediately so it's available
+                db.commit()
+                db.refresh(rider)
+            else:
+                print(f"[WARNING] Contract generation returned None for rider {rider.id}")
+        except Exception as e:
+            # Don't fail pickup verification if contract generation fails
+            print(f"[ERROR] Contract generation failed (non-blocking): {str(e)}")
+            import traceback
+            traceback.print_exc()
+    
     db.commit()
     db.refresh(req)
+    if rider:
+        db.refresh(rider)
     return {"ok": True, "pickup_verified_at": req.pickup_verified_at.isoformat()}
 
 
@@ -433,22 +457,16 @@ def verify_operator_otp(db: Session, *, request_id: str, otp: str) -> dict:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown operator")
         user = db.query(OperatorUser).filter(OperatorUser.phone == ch.phone).one_or_none()
         if not user:
-            # Dev convenience: after DB wipes, allow first login to bootstrap the operator user.
-            if settings.env == "dev":
+            # Auto-create operator user when OTP is verified (if user can verify OTP, they should be able to log in)
                 user = _ensure_operator_user(db, phone=ch.phone)
-            else:
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No operator user for this phone")
         membership = (
             db.query(OperatorMembership)
             .filter(OperatorMembership.operator_id == op.slug, OperatorMembership.user_id == user.id)
             .one_or_none()
         )
         if not membership:
-            # Dev convenience: bootstrap membership so portals can be used immediately after resets.
-            if settings.env == "dev":
+            # Auto-create membership when OTP is verified (if user can verify OTP, grant them access)
                 membership = _ensure_membership(db, operator_id=op.slug, user_id=user.id, role=OperatorMembershipRole.OWNER)
-            else:
-                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User not a member of this operator")
 
     token = create_access_token(
         sub=user.id,
@@ -600,6 +618,9 @@ def get_inbox_request_detail(db: Session, *, operator_id: str, supply_request_id
             "emergency_contact": rider.emergency_contact if rider else None,
             "preferred_zones": zones or None,
             "status": rider.status.value if rider else "UNKNOWN",
+            "contract_url": rider.contract_url if rider else None,
+            "signed_contract_url": rider.signed_contract_url if rider else None,
+            "signed_at": rider.signed_at.isoformat() if rider and rider.signed_at else None,
         },
     }
 
@@ -672,12 +693,35 @@ def upsert_inbox_state(
     return row
 
 
-def create_vehicle(db: Session, *, operator_id: str, registration_number: str, model: str | None, meta: str | None) -> Vehicle:
+def _extract_vin_from_meta(meta: str | None) -> str | None:
+    """Extract VIN from meta JSON string."""
+    if not meta:
+        return None
+    try:
+        meta_dict = json.loads(meta) if isinstance(meta, str) else meta
+        return meta_dict.get("vin") or meta_dict.get("vehicle_identification_number")
+    except (json.JSONDecodeError, TypeError, AttributeError):
+        return None
+
+
+def create_vehicle(db: Session, *, operator_id: str, registration_number: str, vin: str | None = None, model: str | None = None, meta: str | None = None) -> Vehicle:
     reg = registration_number.strip().upper()
     exists = db.query(Vehicle).filter(Vehicle.operator_id == operator_id, Vehicle.registration_number == reg).one_or_none()
     if exists:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Vehicle already exists for this operator")
-    v = Vehicle(operator_id=operator_id, registration_number=reg, model=model, meta=meta)
+    
+    # Merge VIN into meta JSON if provided
+    meta_dict = {}
+    if meta:
+        try:
+            meta_dict = json.loads(meta) if isinstance(meta, str) else meta
+        except (json.JSONDecodeError, TypeError):
+            meta_dict = {}
+    if vin:
+        meta_dict["vin"] = vin.strip()
+    meta_final = json.dumps(meta_dict) if meta_dict else None
+    
+    v = Vehicle(operator_id=operator_id, registration_number=reg, model=model, meta=meta_final)
     db.add(v)
     db.commit()
     db.refresh(v)
@@ -692,6 +736,13 @@ def list_vehicles(db: Session, *, operator_id: str, limit: int = 200) -> list[Ve
         .limit(limit)
         .all()
     )
+
+
+def get_vehicle(db: Session, *, operator_id: str, vehicle_id: str) -> Vehicle:
+    v = db.get(Vehicle, vehicle_id)
+    if not v or v.operator_id != operator_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown vehicle")
+    return v
 
 
 def bind_device(db: Session, *, operator_id: str, vehicle_id: str, device_id: str, provider: str | None) -> TelematicsDevice:

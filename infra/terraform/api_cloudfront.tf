@@ -20,11 +20,13 @@ resource "aws_cloudfront_distribution" "api" {
     viewer_protocol_policy = "redirect-to-https"
 
     allowed_methods = ["GET", "HEAD", "OPTIONS", "PUT", "POST", "PATCH", "DELETE"]
-    cached_methods  = ["GET", "HEAD", "OPTIONS"]
+    # OPTIONS and POST should NOT be cached - CORS preflight and API requests must reach origin
+    cached_methods  = ["GET", "HEAD"]
     compress        = true
 
     # Legacy forwarding mode: this is the simplest way to forward Authorization headers
     # for bearer token auth without custom domains / ALB TLS.
+    # TTL set to 0 to prevent caching errors
     min_ttl     = 0
     default_ttl = 0
     max_ttl     = 0
@@ -36,6 +38,22 @@ resource "aws_cloudfront_distribution" "api" {
         forward = "none"
       }
     }
+  }
+
+  # Custom error response to prevent caching of 5xx errors
+  custom_error_response {
+    error_code            = 503
+    error_caching_min_ttl = 0
+  }
+
+  custom_error_response {
+    error_code            = 502
+    error_caching_min_ttl = 0
+  }
+
+  custom_error_response {
+    error_code            = 504
+    error_caching_min_ttl = 0
   }
 
   restrictions {

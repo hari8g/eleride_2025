@@ -75,6 +75,9 @@ class InboxRiderDetail(BaseModel):
     name: str | None = None
     dob: str | None = None
     address: str | None = None
+    contract_url: str | None = None
+    signed_contract_url: str | None = None
+    signed_at: str | None = None
     emergency_contact: str | None = None
     preferred_zones: list[str] | None = None
     status: str
@@ -119,6 +122,7 @@ class InboxUpdateIn(BaseModel):
 
 class VehicleCreateIn(BaseModel):
     registration_number: str = Field(min_length=3, max_length=32)
+    vin: str | None = Field(default=None, min_length=3, max_length=32)
     model: str | None = Field(default=None, max_length=64)
     meta: str | None = Field(default=None, max_length=1024)
 
@@ -126,6 +130,7 @@ class VehicleCreateIn(BaseModel):
 class VehicleOut(BaseModel):
     id: str
     registration_number: str
+    vin: str | None = None
     status: VehicleStatus
     model: str | None = None
     meta: str | None = None

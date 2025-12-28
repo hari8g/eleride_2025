@@ -36,10 +36,14 @@ from sklearn.preprocessing import OneHotEncoder
 # ----------------------------
 # CONFIG
 # ----------------------------
-DEFAULT_INPUT = "./docs/ELERIDE IBBN Payout Sep 25 WEEK 4.xlsx"
-MODEL_OUT = "demand_model.joblib"
-METRICS_OUT = "training_metrics.json"
-FI_OUT = "feature_importance.csv"
+# Get project root (3 levels up from this script: scripts/demand-model/)
+PROJECT_ROOT = Path(__file__).parent.parent.parent
+DATA_MODELS_DIR = PROJECT_ROOT / "data" / "models"
+
+DEFAULT_INPUT = PROJECT_ROOT / "docs" / "ELERIDE IBBN Payout Sep 25 WEEK 4.xlsx"
+MODEL_OUT = DATA_MODELS_DIR / "demand_model.joblib"
+METRICS_OUT = DATA_MODELS_DIR / "training_metrics.json"
+FI_OUT = DATA_MODELS_DIR / "feature_importance.csv"
 
 
 # ----------------------------
@@ -317,8 +321,15 @@ def train_model(store_week: pd.DataFrame, time_col: str, target_col: str) -> Tup
 # ----------------------------
 # MAIN
 # ----------------------------
-def main(input_path: str = DEFAULT_INPUT):
+def main(input_path: str = None):
+    if input_path is None:
+        input_path = str(DEFAULT_INPUT)
+    else:
     input_path = str(input_path)
+    
+    # Ensure output directory exists
+    DATA_MODELS_DIR.mkdir(parents=True, exist_ok=True)
+    
     if not os.path.exists(input_path):
         raise FileNotFoundError(f"Input not found: {input_path}")
 
@@ -334,14 +345,14 @@ def main(input_path: str = DEFAULT_INPUT):
     model, metrics, fi_df = train_model(store_week, time_col, target_col)
 
     print(f"[4/5] Saving model → {MODEL_OUT}")
-    joblib.dump(model, MODEL_OUT)
+    joblib.dump(model, str(MODEL_OUT))
 
     print(f"[5/5] Saving metrics → {METRICS_OUT}")
-    with open(METRICS_OUT, "w", encoding="utf-8") as f:
+    with open(str(METRICS_OUT), "w", encoding="utf-8") as f:
         json.dump(metrics, f, indent=2)
 
     if not fi_df.empty:
-        fi_df.to_csv(FI_OUT, index=False)
+        fi_df.to_csv(str(FI_OUT), index=False)
         print(f"Saved feature names → {FI_OUT}")
 
     print("\nDone.")

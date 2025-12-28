@@ -20,6 +20,13 @@ class RiderProfileOut(BaseModel):
     address: str | None = None
     emergency_contact: str | None = None
     preferred_zones: list[str] | None = None
+    contract_url: str | None = None
+    signed_contract_url: str | None = None
+    signed_at: str | None = None
+
+
+class ContractSignIn(BaseModel):
+    signature_image: str = Field(..., description="Base64 encoded signature image (data URL)")
 
 
 class RiderStatusOut(BaseModel):

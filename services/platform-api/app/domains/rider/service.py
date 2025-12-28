@@ -14,6 +14,11 @@ def get_rider_by_phone(db: Session, phone: str) -> Rider:
     return rider
 
 
+def get_rider_by_id(db: Session, rider_id: str) -> Rider | None:
+    rider = db.query(Rider).filter(Rider.id == rider_id).one_or_none()
+    return rider
+
+
 def upsert_profile(
     db: Session,
     *,

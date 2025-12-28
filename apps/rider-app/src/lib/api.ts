@@ -82,6 +82,22 @@ export const api = {
       active_commitment?: any | null;
     }>("/riders/status", { token }),
 
+  riderMe: (token: string) =>
+    http<{
+      rider_id: string;
+      phone: string;
+      status: RiderStatus;
+      name?: string | null;
+      dob?: string | null;
+      address?: string | null;
+      emergency_contact?: string | null;
+      preferred_zones?: string[] | null;
+      contract_url?: string | null;
+    }>("/riders/me", { token }),
+
+  riderContract: (token: string) =>
+    http<string>("/riders/contract", { token }),
+
   profileUpsert: (token: string, payload: {
     name: string;
     dob: string;
@@ -141,8 +157,17 @@ export const api = {
       pickup_qr_png_base64?: string | null;
       pickup_qr_code?: string | null;
       pickup_verified_at?: string | null;
+      contract_url?: string | null;
       stage: { code: string; label: string; detail?: string | null };
+      signed_contract_url?: string | null;
     }>(`/supply/status${request_id ? `?request_id=${encodeURIComponent(request_id)}` : ""}`, { token }),
+
+  contractSign: (token: string, signature_image: string) =>
+    http<{ rider_id: string; signed_contract_url: string; signed_at: string }>("/riders/contract/sign", {
+      method: "POST",
+      token,
+      body: JSON.stringify({ signature_image: signature_image }),
+    }),
 };
 
 

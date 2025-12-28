@@ -124,7 +124,9 @@ resource "aws_ecs_task_definition" "platform_api" {
         { name = "MSG91_WHATSAPP_FLOW_ID", value = var.msg91_whatsapp_flow_id },
         { name = "MSG91_WHATSAPP_OTP_VAR", value = var.msg91_whatsapp_otp_var },
         { name = "MSG91_OTP_CHANNEL_ORDER", value = var.msg91_otp_channel_order },
-        { name = "CASHFLOW_DATA_DIR", value = "/app/cashflow_data" }
+        { name = "CASHFLOW_DATA_DIR", value = "/app/cashflow_data" },
+        { name = "CONTRACT_SERVICE_URL", value = "http://${aws_lb.api.dns_name}/contracts" },
+        { name = "CONTRACT_SERVICE_URL_EXTERNAL", value = local.enable_custom_domain && local.domain_api != null ? "https://${local.domain_api}/contracts" : "https://${aws_cloudfront_distribution.api.domain_name}/contracts" }
       ]
       logConfiguration = {
         logDriver = "awslogs"

@@ -34,5 +34,18 @@ services:
       - ./docs:/app/docs:ro
       - ./services/platform-api/app:/app/app
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    environment:
+      - CONTRACT_SERVICE_URL=http://contract-service:8000
+      - CONTRACT_SERVICE_URL_EXTERNAL=http://localhost:8002
+
+  contract-service:
+    build:
+      context: ./services/contract-service
+    ports:
+      - "8002:8000"
+    volumes:
+      - ./services/contract-service/templates:/app/templates:ro
+      - ./services/contract-service/generated:/app/generated
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
 
 

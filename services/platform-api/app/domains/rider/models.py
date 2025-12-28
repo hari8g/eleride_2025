@@ -26,6 +26,10 @@ class Rider(Base):
     address: Mapped[str | None] = mapped_column(String, nullable=True)
     emergency_contact: Mapped[str | None] = mapped_column(String, nullable=True)
     preferred_zones: Mapped[str | None] = mapped_column(String, nullable=True)  # MVP: comma-separated
+    contract_url: Mapped[str | None] = mapped_column(String, nullable=True)  # URL to generated contract PDF
+    signed_contract_url: Mapped[str | None] = mapped_column(String, nullable=True)  # URL to signed contract PDF
+    signature_image: Mapped[str | None] = mapped_column(String, nullable=True)  # Base64 encoded signature image
+    signed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)  # When contract was signed
 
     status: Mapped[RiderStatus] = mapped_column(Enum(RiderStatus), default=RiderStatus.NEW)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))

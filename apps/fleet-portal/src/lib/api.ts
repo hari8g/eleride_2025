@@ -58,6 +58,9 @@ export type InboxDetail = {
     emergency_contact?: string | null;
     preferred_zones?: string[] | null;
     status: string;
+    contract_url?: string | null;
+    signed_contract_url?: string | null;
+    signed_at?: string | null;
   };
 };
 
@@ -196,7 +199,10 @@ export const api = {
 
   vehiclesList: (token: string) => http<{ items: Vehicle[] }>("/operator/vehicles", { token }),
 
-  vehicleCreate: (token: string, payload: { registration_number: string; model?: string; meta?: string }) =>
+  vehicleDetail: (token: string, vehicle_id: string) =>
+    http<Vehicle>(`/operator/vehicles/${encodeURIComponent(vehicle_id)}`, { token }),
+
+  vehicleCreate: (token: string, payload: { registration_number: string; vin?: string; model?: string; meta?: string }) =>
     http<Vehicle>("/operator/vehicles", { method: "POST", token, body: JSON.stringify(payload) }),
 
   deviceBind: (token: string, vehicle_id: string, payload: { device_id: string; provider?: string }) =>

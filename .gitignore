@@ -22,8 +22,11 @@ venv/
 
 # Env files / secrets
 env.local
+env.dev
+env.prod
 .env
 .env.*
+# Note: env.localhost and env.example are template files and should be tracked
 
 # Terraform
 **/.terraform/
@@ -31,6 +34,37 @@ env.local
 **/*.tfstate
 **/*.tfstate.*
 **/terraform.tfvars
+
+# TypeScript build info
+*.tsbuildinfo
+
+# Virtual environments
+**/venv/
+**/env/
+**/awscli-venv/
+**/.venv/
+
+# Model files and training data
+*.joblib
+*.pkl
+*.h5
+*.ckpt
+training_metrics.json
+
+# Data files (Excel, CSV outputs)
+*.xlsx
+*.xls
+**/outputs/
+**/outputs_*/
+**/Data/
+
+# Screenshots and images (except assets)
+**/*.png
+**/*.jpg
+**/*.jpeg
+!**/assets/**/*.png
+!**/assets/**/*.jpg
+!**/assets/**/*.jpeg
 
 # Misc
 *.log

@@ -141,6 +141,21 @@ def rider_supply_status(
         pickup_qr_png = qr_png_base64(payload)
         pickup_code = pickup_qr_code(supply_request_id=req.id, operator_id=req.operator_id, vehicle_reg=vehicle_reg)
 
+    # Get contract URL from rider if pickup is verified
+    contract_url = None
+    signed_contract_url = None
+    if req.pickup_verified_at:
+        rider = get_rider_by_phone(db, principal.sub)
+        # Refresh rider to get latest contract_url (in case it was just generated)
+        db.refresh(rider)
+        contract_url = rider.contract_url
+        signed_contract_url = rider.signed_contract_url
+        # Debug logging
+        if contract_url:
+            print(f"[DEBUG] Supply status: Found contract_url for rider {rider.id}: {contract_url}")
+        else:
+            print(f"[DEBUG] Supply status: No contract_url found for rider {rider.id} (pickup verified at {req.pickup_verified_at})")
+
     return RiderSupplyStatusOut(
         request_id=req.id,
         created_at=req.created_at.isoformat(),
@@ -157,6 +172,8 @@ def rider_supply_status(
         pickup_qr_png_base64=pickup_qr_png,
         pickup_qr_code=pickup_code,
         pickup_verified_at=(req.pickup_verified_at.isoformat() if req.pickup_verified_at else None),
+        contract_url=contract_url,
+        signed_contract_url=signed_contract_url,
         inbox_state=inbox_state,
         inbox_note=inbox_note,
         inbox_updated_at=inbox_updated_at,

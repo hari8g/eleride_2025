@@ -19,9 +19,10 @@ echo ""
 echo "Logging in to ECR..."
 aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "$ECR_REPO"
 
-echo "Building Docker image..."
+echo "Building Docker image for linux/amd64 (ECS Fargate compatible)..."
 # Build from project root with Dockerfile in services/platform-api
-docker build -t "${ECR_REPO}:latest" -f services/platform-api/Dockerfile .
+# Use --platform linux/amd64 to ensure compatibility with ECS Fargate (not ARM64)
+docker build --platform linux/amd64 -t "${ECR_REPO}:latest" -f services/platform-api/Dockerfile .
 
 echo "Pushing image to ECR..."
 docker push "${ECR_REPO}:latest"

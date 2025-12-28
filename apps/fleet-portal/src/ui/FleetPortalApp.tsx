@@ -113,6 +113,8 @@ export function FleetPortalApp() {
   const [showAddVehicleForm, setShowAddVehicleForm] = useState(false);
   const [newDeviceId, setNewDeviceId] = useState("");
   const [newDeviceProvider, setNewDeviceProvider] = useState("");
+  const [vehiclePage, setVehiclePage] = useState(1);
+  const VEHICLES_PER_PAGE = 50;
 
   const LS_INBOX_LAST_SEEN = useMemo(() => `eleride.fleet_portal.inbox.last_seen.${operatorSlug}`, [operatorSlug]);
   const LS_MAINT_LAST_SEEN = useMemo(() => `eleride.fleet_portal.maint.last_seen.${operatorSlug}`, [operatorSlug]);
@@ -127,6 +129,7 @@ export function FleetPortalApp() {
   }
 
   // vehicle creation
+  const [newVin, setNewVin] = useState("");
   const [newReg, setNewReg] = useState("MH12AB1234");
   const [newVehicleType, setNewVehicleType] = useState<"EV Scooter" | "EV Bike" | "EV 3W">("EV Scooter");
   const [newMake, setNewMake] = useState("Ola");
@@ -134,6 +137,14 @@ export function FleetPortalApp() {
   const [newYear, setNewYear] = useState<string>("2025");
   const [newColor, setNewColor] = useState("White");
   const [newBatteryKwh, setNewBatteryKwh] = useState<string>("3.0");
+  const [newBatteryId, setNewBatteryId] = useState("");
+  const [newBatteryNumber, setNewBatteryNumber] = useState("");
+  const [newLocation, setNewLocation] = useState("");
+  const [newCity, setNewCity] = useState("");
+  const [newRegDate, setNewRegDate] = useState("");
+  const [newChassisNumber, setNewChassisNumber] = useState("");
+  const [newMfgYear, setNewMfgYear] = useState("");
+  const [newRcOwnerName, setNewRcOwnerName] = useState("");
   const [newOwnership, setNewOwnership] = useState<"OWNED" | "LEASED">("LEASED");
   const [newLeasingPartner, setNewLeasingPartner] = useState<string>("Eleride Leasing");
   const [newNotes, setNewNotes] = useState<string>("New vehicle, ready for onboarding.");
@@ -155,16 +166,44 @@ export function FleetPortalApp() {
     }
   }
 
+  function getVehicleVIN(vehicle: Vehicle): string {
+    const meta = parseMeta(vehicle.meta);
+    return meta?.vin || vehicle.registration_number;
+  }
+
+  function getVehicleLocation(vehicle: Vehicle): string {
+    const meta = parseMeta(vehicle.meta);
+    if (meta?.location) return meta.location;
+    if (meta?.city) return meta.city;
+    if (vehicle.last_lat && vehicle.last_lon) return arenaFor(vehicle.last_lat, vehicle.last_lon);
+    return "—";
+  }
+
+  function getBatteryId(vehicle: Vehicle): string {
+    const meta = parseMeta(vehicle.meta);
+    return meta?.battery_id || meta?.battery_number || "—";
+  }
+
   function buildVehicleMetaString(): string {
     const meta: Record<string, any> = {
-      make: newMake.trim() || undefined,
+      brand: newMake.trim() || undefined,
+      model: newVariant.trim() || undefined,
       variant: newVariant.trim() || undefined,
       year: newYear.trim() || undefined,
+      mfg_year: newMfgYear.trim() || undefined,
       color: newColor.trim() || undefined,
       battery_kwh: newBatteryKwh.trim() || undefined,
       ownership: newOwnership,
       leasing_partner: newOwnership === "LEASED" ? (newLeasingPartner.trim() || undefined) : undefined,
       notes: newNotes.trim() || undefined,
+      battery_id: newBatteryId.trim() || undefined,
+      battery_number: newBatteryNumber.trim() || undefined,
+      location: newLocation.trim() || undefined,
+      city: newCity.trim() || undefined,
+      reg_date: newRegDate.trim() || undefined,
+      chassis_number: newChassisNumber.trim() || undefined,
+      rc_owner_name: newRcOwnerName.trim() || undefined,
+      registration_number: newReg.trim() || undefined,
     };
     for (const k of Object.keys(meta)) if (meta[k] == null || meta[k] === "") delete meta[k];
     return JSON.stringify(meta);
@@ -324,13 +363,27 @@ export function FleetPortalApp() {
   }, [sess?.token, selectedReqId]);
 
   useEffect(() => {
-    if (selectedVehicleId) {
+    if (selectedVehicleId && sess?.token) {
       refreshMaintenance(selectedVehicleId).catch(() => null);
+      // Refresh vehicle detail to ensure we have latest data
+      api.vehicleDetail(sess.token, selectedVehicleId)
+        .then((v) => {
+          setVehicles(prev => {
+            const idx = prev.findIndex(vv => vv.id === v.id);
+            if (idx >= 0) {
+              const updated = [...prev];
+              updated[idx] = v;
+              return updated;
+            }
+            return [...prev, v];
+          });
+        })
+        .catch(() => null);
     } else {
       setMaintenance([]);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedVehicleId]);
+  }, [selectedVehicleId, sess?.token]);
 
   if (!sess?.token) {
     return (
@@ -459,6 +512,14 @@ export function FleetPortalApp() {
     return base.filter((v) => v.status === vehicleFilter);
   }, [vehicles, vehicleFilter]);
 
+  const paginatedVehicles = useMemo(() => {
+    const start = (vehiclePage - 1) * VEHICLES_PER_PAGE;
+    const end = start + VEHICLES_PER_PAGE;
+    return filteredVehicles.slice(start, end);
+  }, [filteredVehicles, vehiclePage]);
+
+  const totalPages = Math.ceil(filteredVehicles.length / VEHICLES_PER_PAGE);
+
   return (
     <div className="app">
       <aside className="sidebar">
@@ -490,7 +551,7 @@ export function FleetPortalApp() {
           </button>
           {selectedVehicle ? (
             <button className={`navBtn ${tab === "vehicle" ? "navBtnActive" : ""}`} onClick={() => setTab("vehicle")}>
-              Vehicle: {selectedVehicle.registration_number}
+              Vehicle: {getVehicleVIN(selectedVehicle)}
             </button>
           ) : null}
         </div>
@@ -614,10 +675,18 @@ export function FleetPortalApp() {
                   <div style={{ fontWeight: 900 }}>Add new vehicle</div>
                   <div className="grid2">
                     <div>
+                      <label>VIN (Vehicle Identification Number) *</label>
+                      <input value={newVin} onChange={(e) => setNewVin(e.target.value)} placeholder="VIN1234567890" />
+                      <div className="helper">Primary vehicle identifier (required).</div>
+                    </div>
+                    <div>
                       <label>Registration number</label>
                       <input value={newReg} onChange={(e) => setNewReg(e.target.value)} placeholder="MH12AB1234" />
-                      <div className="helper">Use the official registration number (unique vehicle ID).</div>
+                      <div className="helper">Official registration number.</div>
                     </div>
+                  </div>
+
+                  <div className="grid2">
                     <div>
                       <label>Vehicle type</label>
                       <select value={newVehicleType} onChange={(e) => setNewVehicleType(e.target.value as any)}>
@@ -625,6 +694,10 @@ export function FleetPortalApp() {
                         <option value="EV Bike">EV Bike</option>
                         <option value="EV 3W">EV 3W</option>
                       </select>
+                    </div>
+                    <div>
+                      <label>Battery ID</label>
+                      <input value={newBatteryId} onChange={(e) => setNewBatteryId(e.target.value)} placeholder="BAT123456" />
                     </div>
                   </div>
 
@@ -676,9 +749,15 @@ export function FleetPortalApp() {
                     </div>
                   ) : null}
 
+                  <div className="grid2">
+                    <div>
+                      <label>Location</label>
+                      <input value={newLocation} onChange={(e) => setNewLocation(e.target.value)} placeholder="Warehouse / Depot / City" />
+                    </div>
                   <div>
                     <label>Notes</label>
-                    <textarea value={newNotes} onChange={(e) => setNewNotes(e.target.value)} placeholder="Condition, allocation, special remarks…" />
+                      <input value={newNotes} onChange={(e) => setNewNotes(e.target.value)} placeholder="Condition, allocation, special remarks…" />
+                    </div>
                   </div>
 
                   <div className="divider" />
@@ -700,10 +779,14 @@ export function FleetPortalApp() {
                     disabled={busy}
                     onClick={() =>
                       run(async () => {
-                        const reg = newReg.trim().toUpperCase();
+                        if (!newVin.trim()) {
+                          setError("VIN is required");
+                          return;
+                        }
+                        const reg = newReg.trim().toUpperCase() || newVin.trim().toUpperCase();
                         const model = `${newVehicleType}${newMake.trim() ? ` • ${newMake.trim()}` : ""}${newVariant.trim() ? ` ${newVariant.trim()}` : ""}`.trim();
                         const meta = buildVehicleMetaString();
-                        const newVehicle = await api.vehicleCreate(sess.token, { registration_number: reg, model, meta });
+                        const newVehicle = await api.vehicleCreate(sess.token, { registration_number: reg, vin: newVin.trim(), model, meta });
                         await refreshVehicles();
                         
                         // If device ID provided, bind it immediately
@@ -715,6 +798,7 @@ export function FleetPortalApp() {
                         }
                         
                         // Reset form
+                        setNewVin("");
                         setNewReg("MH12AB1234");
                         setNewVehicleType("EV Scooter");
                         setNewMake("Ola");
@@ -722,12 +806,21 @@ export function FleetPortalApp() {
                         setNewYear("2025");
                         setNewColor("White");
                         setNewBatteryKwh("3.0");
+                        setNewBatteryId("");
+                        setNewBatteryNumber("");
+                        setNewLocation("");
+                        setNewCity("");
+                        setNewRegDate("");
+                        setNewChassisNumber("");
+                        setNewMfgYear("");
+                        setNewRcOwnerName("");
                         setNewOwnership("LEASED");
                         setNewLeasingPartner("Eleride Leasing");
                         setNewNotes("New vehicle, ready for onboarding.");
                         setNewDeviceId("");
                         setNewDeviceProvider("");
                         setShowAddVehicleForm(false);
+                        setVehiclePage(1);
                         setError(`Vehicle ${reg} created${newDeviceId.trim() ? ` with device ${newDeviceId.trim()} bound` : ""}.`);
                       })
                     }
@@ -740,7 +833,7 @@ export function FleetPortalApp() {
               <table className="table">
                 <thead>
                   <tr>
-                    <th>Registration</th>
+                    <th>VIN</th>
                     <th>Model</th>
                     <th>Arena</th>
                     <th>Status</th>
@@ -759,9 +852,9 @@ export function FleetPortalApp() {
                         setTab("vehicle");
                       }}
                     >
-                      <td style={{ fontWeight: 900 }}>{v.registration_number}</td>
+                      <td style={{ fontWeight: 900 }}>{getVehicleVIN(v)}</td>
                       <td className="helper">{v.model ?? "—"}</td>
-                      <td className="helper">{arenaFor(v.last_lat, v.last_lon)}</td>
+                      <td className="helper">{getVehicleLocation(v)}</td>
                       <td>
                         <span className={v.status === "ACTIVE" ? "tag tagOk" : v.status === "IN_MAINTENANCE" ? "tag tagWarn" : "tag"}>
                           {v.status}
@@ -1112,7 +1205,7 @@ export function FleetPortalApp() {
                       <div className="card stack" style={{ boxShadow: "none", background: "rgba(255,255,255,0.02)" }}>
                         <div style={{ fontWeight: 1000 }}>Close loop: verify pickup QR</div>
                         <div className="helper">
-                          Enter the rider’s <b>Pickup code</b> shown under their QR to complete the workflow.
+                          Enter the rider's <b>Pickup code</b> shown under their QR to complete the workflow.
                         </div>
                         <div className="row">
                           <div style={{ flex: 1 }}>
@@ -1127,11 +1220,65 @@ export function FleetPortalApp() {
                                 const r = await api.pickupVerify(sess.token, selectedReq.supply_request_id, pickupCode.trim());
                                 setError(`Pickup verified at ${new Date(r.pickup_verified_at).toLocaleString()}`);
                                 setPickupCode("");
+                                // Refresh inbox detail to get updated contract info
+                                const d = await api.inboxDetail(sess.token, selectedReq.supply_request_id);
+                                setSelectedReq(d);
                               })
                             }
                           >
                             Verify & close
                           </button>
+                        </div>
+                      </div>
+                    </>
+                  ) : null}
+
+                  {/* Signed Contract Section */}
+                  {selectedReq.rider?.signed_contract_url ? (
+                    <>
+                      <div className="divider" />
+                      <div className="card stack" style={{ boxShadow: "none", background: "rgba(255,255,255,0.02)" }}>
+                        <div style={{ fontWeight: 1000 }}>Signed Contract</div>
+                        <div className="helper">
+                          Rider has signed the contract on {selectedReq.rider.signed_at ? new Date(selectedReq.rider.signed_at).toLocaleString() : "N/A"}
+                        </div>
+                        <div className="row" style={{ gap: 12, marginTop: 12 }}>
+                          <a
+                            href={selectedReq.rider.signed_contract_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="btn btnPrimary"
+                            style={{ textDecoration: "none" }}
+                          >
+                            View Signed Contract
+                          </a>
+                          <a
+                            href={selectedReq.rider.signed_contract_url}
+                            download
+                            className="btn btnSecondary"
+                            style={{ textDecoration: "none" }}
+                          >
+                            Download
+                          </a>
+                        </div>
+                      </div>
+                    </>
+                  ) : selectedReq.rider?.contract_url ? (
+                    <>
+                      <div className="divider" />
+                      <div className="card stack" style={{ boxShadow: "none", background: "rgba(255,255,255,0.02)" }}>
+                        <div style={{ fontWeight: 1000 }}>Contract Status</div>
+                        <div className="helper">Contract generated. Waiting for rider to sign.</div>
+                        <div className="row" style={{ gap: 12, marginTop: 12 }}>
+                          <a
+                            href={selectedReq.rider.contract_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="btn btnSecondary"
+                            style={{ textDecoration: "none" }}
+                          >
+                            View Contract
+                          </a>
                         </div>
                       </div>
                     </>
@@ -1149,10 +1296,10 @@ export function FleetPortalApp() {
                 <div style={{ fontWeight: 1000 }}>Fleet health</div>
                 <div className="row">
                   <span className="pill">Filter: {vehicleFilter}</span>
-                  <button className="btn" onClick={() => setVehicleFilter("ALL")}>All</button>
-                  <button className="btn" onClick={() => setVehicleFilter("ACTIVE")}>Active</button>
-                  <button className="btn" onClick={() => setVehicleFilter("IN_MAINTENANCE")}>Maintenance</button>
-                  <button className="btn" onClick={() => setVehicleFilter("LOW_BATT")}>Low batt</button>
+                  <button className="btn" onClick={() => { setVehicleFilter("ALL"); setVehiclePage(1); }}>All</button>
+                  <button className="btn" onClick={() => { setVehicleFilter("ACTIVE"); setVehiclePage(1); }}>Active</button>
+                  <button className="btn" onClick={() => { setVehicleFilter("IN_MAINTENANCE"); setVehiclePage(1); }}>Maintenance</button>
+                  <button className="btn" onClick={() => { setVehicleFilter("LOW_BATT"); setVehiclePage(1); }}>Low batt</button>
                 </div>
               </div>
               <FleetMapPanel
@@ -1165,99 +1312,6 @@ export function FleetPortalApp() {
               <div className="helper">Showing {filteredVehicles.length} vehicles on the map.</div>
             </div>
 
-            {canManageVehicles(sess.role) ? (
-              <div className="card stack">
-                <div style={{ fontWeight: 900 }}>Add vehicle</div>
-                <div className="grid2">
-                  <div>
-                    <label>Registration number</label>
-                    <input value={newReg} onChange={(e) => setNewReg(e.target.value)} placeholder="MH12AB1234" />
-                    <div className="helper">Use the official registration number (unique vehicle ID).</div>
-                  </div>
-                  <div>
-                    <label>Vehicle type</label>
-                    <select value={newVehicleType} onChange={(e) => setNewVehicleType(e.target.value as any)}>
-                      <option value="EV Scooter">EV Scooter</option>
-                      <option value="EV Bike">EV Bike</option>
-                      <option value="EV 3W">EV 3W</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div className="grid2">
-                  <div>
-                    <label>Make (brand)</label>
-                    <input value={newMake} onChange={(e) => setNewMake(e.target.value)} placeholder="Ola / Ather / TVS…" />
-                  </div>
-                  <div>
-                    <label>Variant / trim</label>
-                    <input value={newVariant} onChange={(e) => setNewVariant(e.target.value)} placeholder="S1 Pro / 450X…" />
-                  </div>
-                </div>
-
-                <div className="grid2">
-                  <div>
-                    <label>Year</label>
-                    <input value={newYear} onChange={(e) => setNewYear(e.target.value)} inputMode="numeric" placeholder="2025" />
-                  </div>
-                  <div>
-                    <label>Color</label>
-                    <input value={newColor} onChange={(e) => setNewColor(e.target.value)} placeholder="White" />
-                  </div>
-                </div>
-
-                <div className="grid2">
-                  <div>
-                    <label>Battery capacity (kWh)</label>
-                    <input
-                      value={newBatteryKwh}
-                      onChange={(e) => setNewBatteryKwh(e.target.value)}
-                      inputMode="decimal"
-                      placeholder="3.0"
-                    />
-                  </div>
-                  <div>
-                    <label>Ownership</label>
-                    <select value={newOwnership} onChange={(e) => setNewOwnership(e.target.value as any)}>
-                      <option value="OWNED">Owned</option>
-                      <option value="LEASED">Leased</option>
-                    </select>
-                  </div>
-                </div>
-
-                {newOwnership === "LEASED" ? (
-                  <div>
-                    <label>Leasing partner</label>
-                    <input value={newLeasingPartner} onChange={(e) => setNewLeasingPartner(e.target.value)} placeholder="Eleride Leasing" />
-                  </div>
-                ) : null}
-
-                <div>
-                  <label>Notes</label>
-                  <textarea value={newNotes} onChange={(e) => setNewNotes(e.target.value)} placeholder="Condition, allocation, special remarks…" />
-                </div>
-
-                <div className="helper">
-                  Stored as structured vehicle metadata (operators won’t type JSON). You can later bind a telematics device in the vehicle page.
-                </div>
-                <button
-                  className="btn btnPrimary"
-                  disabled={busy}
-                  onClick={() =>
-                    run(async () => {
-                      const reg = newReg.trim().toUpperCase();
-                      const model = `${newVehicleType}${newMake.trim() ? ` • ${newMake.trim()}` : ""}${newVariant.trim() ? ` ${newVariant.trim()}` : ""}`.trim();
-                      const meta = buildVehicleMetaString();
-                      await api.vehicleCreate(sess.token, { registration_number: reg, model, meta });
-                      await refreshVehicles();
-                    })
-                  }
-                >
-                  Add vehicle
-                </button>
-              </div>
-            ) : null}
-
             <div className="card stack">
               <div className="row" style={{ justifyContent: "space-between" }}>
                 <div style={{ fontWeight: 900 }}>Fleet vehicles</div>
@@ -1266,7 +1320,7 @@ export function FleetPortalApp() {
               <table className="table">
                 <thead>
                   <tr>
-                    <th>Registration</th>
+                    <th>VIN</th>
                     <th>Arena</th>
                     <th>Status</th>
                     <th>Last seen</th>
@@ -1275,10 +1329,10 @@ export function FleetPortalApp() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredVehicles.map((v) => (
+                  {paginatedVehicles.map((v) => (
                     <tr key={v.id}>
-                      <td style={{ fontWeight: 900 }}>{v.registration_number}</td>
-                      <td className="helper">{arenaFor(v.last_lat, v.last_lon)}</td>
+                      <td style={{ fontWeight: 900 }}>{getVehicleVIN(v)}</td>
+                      <td className="helper">{getVehicleLocation(v)}</td>
                       <td>
                         <span className={v.status === "ACTIVE" ? "tag tagOk" : v.status === "IN_MAINTENANCE" ? "tag tagWarn" : "tag"}>
                           {v.status}
@@ -1302,7 +1356,7 @@ export function FleetPortalApp() {
                       </td>
                     </tr>
                   ))}
-                  {filteredVehicles.length === 0 ? (
+                  {paginatedVehicles.length === 0 ? (
                     <tr>
                       <td colSpan={6} className="helper">
                         No vehicles yet.
@@ -1311,7 +1365,202 @@ export function FleetPortalApp() {
                   ) : null}
                 </tbody>
               </table>
+              
+              {totalPages > 1 && (
+                <div className="row" style={{ justifyContent: "space-between", alignItems: "center", marginTop: 16 }}>
+                  <div className="helper">
+                    Showing {(vehiclePage - 1) * VEHICLES_PER_PAGE + 1} - {Math.min(vehiclePage * VEHICLES_PER_PAGE, filteredVehicles.length)} of {filteredVehicles.length} vehicles
+                  </div>
+                  <div className="row" style={{ gap: 8 }}>
+                    <button
+                      className="btn"
+                      disabled={vehiclePage === 1}
+                      onClick={() => setVehiclePage(vehiclePage - 1)}
+                    >
+                      Previous
+                    </button>
+                    <div className="helper" style={{ display: "flex", alignItems: "center", padding: "0 8px" }}>
+                      Page {vehiclePage} of {totalPages}
+                    </div>
+                    <button
+                      className="btn"
+                      disabled={vehiclePage >= totalPages}
+                      onClick={() => setVehiclePage(vehiclePage + 1)}
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
+
+            {canManageVehicles(sess.role) ? (
+              <div className="card stack">
+                <div style={{ fontWeight: 900 }}>Add vehicle</div>
+                <div className="grid2">
+                  <div>
+                    <label>VIN (Vehicle Identification Number) *</label>
+                    <input value={newVin} onChange={(e) => setNewVin(e.target.value)} placeholder="VIN1234567890" />
+                    <div className="helper">Primary vehicle identifier (required).</div>
+                  </div>
+                  <div>
+                    <label>Registration number</label>
+                    <input value={newReg} onChange={(e) => setNewReg(e.target.value)} placeholder="MH12AB1234" />
+                    <div className="helper">Official registration number.</div>
+                  </div>
+                </div>
+
+                <div className="grid2">
+                  <div>
+                    <label>Vehicle type</label>
+                    <select value={newVehicleType} onChange={(e) => setNewVehicleType(e.target.value as any)}>
+                      <option value="EV Scooter">EV Scooter</option>
+                      <option value="EV Bike">EV Bike</option>
+                      <option value="EV 3W">EV 3W</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label>Make (brand)</label>
+                    <input value={newMake} onChange={(e) => setNewMake(e.target.value)} placeholder="Ola / Ather / TVS…" />
+                  </div>
+                </div>
+
+                <div className="grid2">
+                  <div>
+                    <label>Variant / trim</label>
+                    <input value={newVariant} onChange={(e) => setNewVariant(e.target.value)} placeholder="S1 Pro / 450X…" />
+                  </div>
+                  <div>
+                    <label>Color</label>
+                    <input value={newColor} onChange={(e) => setNewColor(e.target.value)} placeholder="White" />
+                  </div>
+                </div>
+
+                <div className="grid2">
+                  <div>
+                    <label>Year</label>
+                    <input value={newYear} onChange={(e) => setNewYear(e.target.value)} inputMode="numeric" placeholder="2025" />
+                  </div>
+                  <div>
+                    <label>Manufacturing Year</label>
+                    <input value={newMfgYear} onChange={(e) => setNewMfgYear(e.target.value)} inputMode="numeric" placeholder="2025" />
+                  </div>
+                </div>
+
+                <div className="grid2">
+                  <div>
+                    <label>Registration Date</label>
+                    <input value={newRegDate} onChange={(e) => setNewRegDate(e.target.value)} placeholder="YYYY-MM-DD" />
+                  </div>
+                  <div>
+                    <label>Chassis Number</label>
+                    <input value={newChassisNumber} onChange={(e) => setNewChassisNumber(e.target.value)} placeholder="Chassis number" />
+                  </div>
+                </div>
+
+                <div className="grid2">
+                  <div>
+                    <label>RC Owner Name</label>
+                    <input value={newRcOwnerName} onChange={(e) => setNewRcOwnerName(e.target.value)} placeholder="Owner name" />
+                  </div>
+                  <div>
+                    <label>Battery capacity (kWh)</label>
+                    <input
+                      value={newBatteryKwh}
+                      onChange={(e) => setNewBatteryKwh(e.target.value)}
+                      inputMode="decimal"
+                      placeholder="3.0"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid2">
+                  <div>
+                    <label>Battery ID</label>
+                    <input value={newBatteryId} onChange={(e) => setNewBatteryId(e.target.value)} placeholder="BAT123456" />
+                  </div>
+                  <div>
+                    <label>Battery Number</label>
+                    <input value={newBatteryNumber} onChange={(e) => setNewBatteryNumber(e.target.value)} placeholder="Battery number" />
+                  </div>
+                </div>
+
+                <div className="grid2">
+                  <div>
+                    <label>Location</label>
+                    <input value={newLocation} onChange={(e) => setNewLocation(e.target.value)} placeholder="Warehouse / Depot / City" />
+                  </div>
+                  <div>
+                    <label>City</label>
+                    <input value={newCity} onChange={(e) => setNewCity(e.target.value)} placeholder="City name" />
+                  </div>
+                </div>
+
+                <div className="grid2">
+                  <div>
+                    <label>Ownership</label>
+                    <select value={newOwnership} onChange={(e) => setNewOwnership(e.target.value as any)}>
+                      <option value="OWNED">Owned</option>
+                      <option value="LEASED">Leased</option>
+                    </select>
+                  </div>
+                {newOwnership === "LEASED" ? (
+                  <div>
+                    <label>Leasing partner</label>
+                    <input value={newLeasingPartner} onChange={(e) => setNewLeasingPartner(e.target.value)} placeholder="Eleride Leasing" />
+                  </div>
+                ) : null}
+                </div>
+
+                <div>
+                  <label>Notes</label>
+                  <textarea value={newNotes} onChange={(e) => setNewNotes(e.target.value)} placeholder="Condition, allocation, special remarks…" />
+                </div>
+
+                <div className="helper">
+                  Stored as structured vehicle metadata (operators won't type JSON). You can later bind a telematics device in the vehicle page.
+                </div>
+                <button
+                  className="btn btnPrimary"
+                  disabled={busy}
+                  onClick={() =>
+                    run(async () => {
+                      if (!newVin.trim()) {
+                        setError("VIN is required");
+                        return;
+                      }
+                      const reg = newReg.trim().toUpperCase() || newVin.trim().toUpperCase();
+                      const model = `${newVehicleType}${newMake.trim() ? ` • ${newMake.trim()}` : ""}${newVariant.trim() ? ` ${newVariant.trim()}` : ""}`.trim();
+                      const meta = buildVehicleMetaString();
+                      await api.vehicleCreate(sess.token, { registration_number: reg, vin: newVin.trim(), model, meta });
+                      await refreshVehicles();
+                      setVehiclePage(1); // Reset to first page
+                      // Reset form
+                      setNewVin("");
+                      setNewReg("MH12AB1234");
+                      setNewMake("Ola");
+                      setNewVariant("S1 Pro");
+                      setNewYear("2025");
+                      setNewColor("White");
+                      setNewBatteryKwh("3.0");
+                      setNewBatteryId("");
+                      setNewBatteryNumber("");
+                      setNewLocation("");
+                      setNewCity("");
+                      setNewRegDate("");
+                      setNewChassisNumber("");
+                      setNewMfgYear("");
+                      setNewRcOwnerName("");
+                      setNewOwnership("LEASED");
+                      setNewLeasingPartner("Eleride Leasing");
+                      setNewNotes("New vehicle, ready for onboarding.");
+                    })
+                  }
+                >
+                  Add vehicle
+                </button>
+              </div>
+            ) : null}
           </div>
         ) : null}
 
@@ -1324,8 +1573,9 @@ export function FleetPortalApp() {
                 <div className="card stack">
                   <div className="row" style={{ justifyContent: "space-between" }}>
                     <div>
-                      <div className="title">{selectedVehicle.registration_number}</div>
+                      <div className="title">VIN: {getVehicleVIN(selectedVehicle)}</div>
                       <div className="helper">{selectedVehicle.model ?? "—"}</div>
+                      <div className="helper">Registration: {selectedVehicle.registration_number}</div>
                     </div>
                     <div className="row">
                       <span className="pill">Status: {selectedVehicle.status}</span>
@@ -1354,20 +1604,119 @@ export function FleetPortalApp() {
 
                     <div className="stack">
                       <div className="card stack" style={{ boxShadow: "none", background: "rgba(255,255,255,0.02)" }}>
-                        <div style={{ fontWeight: 900 }}>Vehicle details</div>
+                        <div style={{ fontWeight: 900 }}>Vehicle Registration Details</div>
                         {(() => {
                           const m = parseMeta(selectedVehicle.meta);
-                          if (!m) return <div className="helper">No structured details saved yet.</div>;
-                          const keys = Object.keys(m);
-                          if (!keys.length) return <div className="helper">No structured details saved yet.</div>;
+                          if (!m) return <div className="helper">No registration details available.</div>;
+                          
+                          // Display key registration fields in a structured format (similar to screenshot)
+                          const regFields = [
+                            { key: "brand", label: "Brand" },
+                            { key: "model", label: "Model" },
+                            { key: "variant", label: "Variant" },
+                            { key: "color", label: "Color" },
+                            { key: "vin", label: "VIN" },
+                            { key: "registration_number", label: "Reg Number" },
+                            { key: "reg_date", label: "Reg Date" },
+                            { key: "chassis_number", label: "Chassis Number" },
+                            { key: "mfg_year", label: "mfg Year" },
+                            { key: "rc_owner_name", label: "Rc Owner Name" },
+                          ];
+                          
+                          const batteryFields = [
+                            { key: "battery_id", label: "Battery ID" },
+                            { key: "battery_number", label: "Battery Number" },
+                          ];
+                          
+                          const locationFields = [
+                            { key: "location", label: "Location" },
+                            { key: "city", label: "City" },
+                          ];
+                          
                           return (
+                            <div className="stack">
+                              <div style={{ fontWeight: 700, marginBottom: 12 }}>Registration Information</div>
                             <div className="kvGrid">
-                              {keys.map((k) => (
+                                {regFields.map(({ key, label }) => {
+                                  const value = m[key];
+                                  if (!value) return null;
+                                  return (
+                                    <React.Fragment key={key}>
+                                      <div className="kvKey">{label}</div>
+                                      <div className="kvValue">{String(value)}</div>
+                                    </React.Fragment>
+                                  );
+                                })}
+                              </div>
+                              
+                              {(m.battery_id || m.battery_number) ? (
+                                <>
+                                  <div className="divider" style={{ margin: "16px 0" }} />
+                                  <div style={{ fontWeight: 700, marginBottom: 12 }}>Battery Information</div>
+                                  <div className="kvGrid">
+                                    {batteryFields.map(({ key, label }) => {
+                                      const value = m[key];
+                                      if (!value) return null;
+                                      return (
+                                        <React.Fragment key={key}>
+                                          <div className="kvKey">{label}</div>
+                                          <div className="kvValue">{String(value)}</div>
+                                        </React.Fragment>
+                                      );
+                                    })}
+                                  </div>
+                                </>
+                              ) : null}
+                              
+                              {(m.location || m.city || (selectedVehicle.last_lat && selectedVehicle.last_lon)) ? (
+                                <>
+                                  <div className="divider" style={{ margin: "16px 0" }} />
+                                  <div style={{ fontWeight: 700, marginBottom: 12 }}>Location</div>
+                                  <div className="kvGrid">
+                                    {locationFields.map(({ key, label }) => {
+                                      const value = m[key];
+                                      if (!value) return null;
+                                      return (
+                                        <React.Fragment key={key}>
+                                          <div className="kvKey">{label}</div>
+                                          <div className="kvValue">{String(value)}</div>
+                                        </React.Fragment>
+                                      );
+                                    })}
+                                    {selectedVehicle.last_lat && selectedVehicle.last_lon ? (
+                                      <>
+                                        <div className="kvKey">Current Arena</div>
+                                        <div className="kvValue">{arenaFor(selectedVehicle.last_lat, selectedVehicle.last_lon)}</div>
+                                      </>
+                                    ) : null}
+                                  </div>
+                                </>
+                              ) : null}
+                              
+                              {/* Show any remaining fields */}
+                              {(() => {
+                                const shownKeys = new Set([
+                                  ...regFields.map(f => f.key),
+                                  ...batteryFields.map(f => f.key),
+                                  ...locationFields.map(f => f.key),
+                                ]);
+                                const remaining = Object.keys(m).filter(k => !shownKeys.has(k));
+                                if (remaining.length === 0) return null;
+                                return (
+                                  <>
+                                    <div className="divider" style={{ margin: "16px 0" }} />
+                                    <div style={{ fontWeight: 700, marginBottom: 12 }}>Additional Information</div>
+                                    <div className="kvGrid">
+                                      {remaining.map((k) => (
                                 <React.Fragment key={k}>
-                                  <div className="kvKey">{k.replace(/_/g, " ")}</div>
+                                          <div className="kvKey">{k.replace(/_/g, " ").replace(/\b\w/g, l => l.toUpperCase())}</div>
                                   <div className="kvValue">{String(m[k])}</div>
                                 </React.Fragment>
                               ))}
+                                    </div>
+                                  </>
+                                );
+                              })()}
                             </div>
                           );
                         })()}

@@ -48,6 +48,7 @@ from app.domains.operator_portal.service import (
     list_inbox,
     list_maintenance,
     list_vehicles,
+    get_vehicle,
     accept_inbox_request_auto_assign_vehicle,
     verify_pickup_qr,
     request_operator_otp,
@@ -228,16 +229,21 @@ def create_vehicle_route(
     principal: Principal = Depends(require_operator_roles({OperatorMembershipRole.OWNER.value, OperatorMembershipRole.ADMIN.value})),
     db: Session = Depends(get_db),
 ) -> VehicleOut:
+    from app.domains.operator_portal.service import _extract_vin_from_meta
+    
     v = create_vehicle(
         db,
         operator_id=principal.operator_id,  # type: ignore[arg-type]
         registration_number=payload.registration_number,
+        vin=payload.vin,
         model=payload.model,
         meta=payload.meta,
     )
+    vin = payload.vin or _extract_vin_from_meta(v.meta)
     return VehicleOut(
         id=v.id,
         registration_number=v.registration_number,
+        vin=vin,
         status=v.status,
         model=v.model,
         meta=v.meta,
@@ -251,12 +257,15 @@ def create_vehicle_route(
 
 @router.get("/vehicles", response_model=VehicleListOut)
 def vehicles(principal: Principal = Depends(require_operator), db: Session = Depends(get_db)) -> VehicleListOut:
-    items = list_vehicles(db, operator_id=principal.operator_id)  # type: ignore[arg-type]
+    from app.domains.operator_portal.service import _extract_vin_from_meta
+    
+    items = list_vehicles(db, operator_id=principal.operator_id, limit=1000)  # type: ignore[arg-type]
     return VehicleListOut(
         items=[
             VehicleOut(
                 id=v.id,
                 registration_number=v.registration_number,
+                vin=_extract_vin_from_meta(v.meta),
                 status=v.status,
                 model=v.model,
                 meta=v.meta,
@@ -268,6 +277,30 @@ def vehicles(principal: Principal = Depends(require_operator), db: Session = Dep
             )
             for v in items
         ]
+    )
+
+
+@router.get("/vehicles/{vehicle_id}", response_model=VehicleOut)
+def vehicle_detail(
+    vehicle_id: str,
+    principal: Principal = Depends(require_operator),
+    db: Session = Depends(get_db),
+) -> VehicleOut:
+    from app.domains.operator_portal.service import _extract_vin_from_meta
+    
+    v = get_vehicle(db, operator_id=principal.operator_id, vehicle_id=vehicle_id)  # type: ignore[arg-type]
+    return VehicleOut(
+        id=v.id,
+        registration_number=v.registration_number,
+        vin=_extract_vin_from_meta(v.meta),
+        status=v.status,
+        model=v.model,
+        meta=v.meta,
+        last_lat=v.last_lat,
+        last_lon=v.last_lon,
+        last_telemetry_at=v.last_telemetry_at.isoformat() if v.last_telemetry_at else None,
+        odometer_km=v.odometer_km,
+        battery_pct=v.battery_pct,
     )
 
 
@@ -465,5 +498,43 @@ def maintenance_list_route(
             for r in items
         ]
     )
+
+
+@router.get("/inbox/requests/{supply_request_id}/contract")
+def get_rider_contract(
+    supply_request_id: str,
+    principal: Principal = Depends(require_operator),
+    db: Session = Depends(get_db),
+):
+    """Get rider's signed contract (or unsigned if not signed yet)."""
+    from fastapi.responses import RedirectResponse
+    from app.domains.supply.models import SupplyRequest
+    from app.domains.rider.models import Rider
+    
+    req = db.query(SupplyRequest).filter(
+        SupplyRequest.id == supply_request_id,
+        SupplyRequest.operator_id == principal.operator_id
+    ).one_or_none()
+    
+    if not req:
+        from fastapi import HTTPException, status
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Request not found")
+    
+    rider = db.query(Rider).filter(Rider.id == req.rider_id).one_or_none()
+    if not rider:
+        from fastapi import HTTPException, status
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Rider not found")
+    
+    # Prefer signed contract, fallback to unsigned
+    contract_url = rider.signed_contract_url or rider.contract_url
+    
+    if not contract_url:
+        from fastapi import HTTPException, status
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Contract not yet generated for this rider"
+        )
+    
+    return RedirectResponse(url=contract_url)
 
 

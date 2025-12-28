@@ -15,7 +15,7 @@ resource "aws_acm_certificate" "cloudfront" {
 
 locals {
   # ACM can return duplicate validation options (same CNAME) for apex + wildcard. Dedupe by name|type.
-  cloudfront_cert_validation_records = local.want_custom_domain ? {
+  cloudfront_cert_validation_records = local.want_custom_domain && length(aws_acm_certificate.cloudfront) > 0 ? {
     for k, v in {
       for dvo in aws_acm_certificate.cloudfront[0].domain_validation_options :
       "${dvo.resource_record_name}|${dvo.resource_record_type}" => {

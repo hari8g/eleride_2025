@@ -1,8 +1,0 @@
-{
-  "rows": 23,
-  "unique_periods": 1,
-  "target": "y_delivered_orders",
-  "note": "Not enough time periods to do time-series CV. Model will be fit on all data; accuracy metrics will be optimistic/undefined. Provide multiple weeks (ideally 12+).",
-  "mae_cv_mean": null,
-  "wape_cv_mean": null
-}

@@ -1,0 +1,21 @@
+{
+  "agreement_city": "Mumbai",
+  "agreement_date_long": "January 15, 2025",
+  "rider_name": "Rajesh Kumar",
+  "rider_age": 28,
+  "rider_father_name": "Suresh Kumar",
+  "rider_address": "Flat 201, Building A, Sector 5, Andheri East, Mumbai - 400069",
+  "rider_id": "ABCD1234EF5678",
+  "weekly_rental_inr": 1500.00,
+  "security_deposit_inr": 5000.00,
+  "account_holder_name": "Eleride Fleet Operations",
+  "bank_name": "HDFC Bank",
+  "account_no": "1234567890123",
+  "ifsc": "HDFC0001234",
+  "branch": "Andheri East Branch",
+  "family_name": "Priya Kumar",
+  "family_phone": "+919876543210",
+  "friend_name": "Amit Sharma",
+  "friend_phone": "+919123456789"
+}
+

@@ -22,6 +22,10 @@ output "ecr_platform_api_repository_url" {
   value = aws_ecr_repository.platform_api.repository_url
 }
 
+output "ecr_contract_service_repository_url" {
+  value = aws_ecr_repository.contract_service.repository_url
+}
+
 output "rds_endpoint" {
   value = aws_db_instance.postgres.address
 }

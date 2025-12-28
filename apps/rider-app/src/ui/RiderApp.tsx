@@ -2,8 +2,9 @@ import React, { useEffect, useMemo, useState } from "react";
 import { api, DemandCard, HttpError, RiderStatus } from "../lib/api";
 import { clearSession, loadSession, saveSession, Session } from "../lib/session";
 import logoPng from "../assets/eleride-logo.png";
+import { SignaturePad } from "../components/SignaturePad";
 
-type Step = "auth" | "profile" | "kyc" | "location" | "demand" | "connect" | "done" | "tracking";
+type Step = "auth" | "profile" | "kyc" | "contract" | "location" | "demand" | "connect" | "done" | "tracking";
 
 type Geo = { lat: number; lon: number; radius_km: 5 | 10 };
 
@@ -168,6 +169,7 @@ function nextFromStatus(status: RiderStatus | null): Step {
   if (status === "NEW") return "profile";
   if (status === "PROFILE_COMPLETED") return "kyc";
   if (status === "KYC_IN_PROGRESS") return "kyc";
+  if (status === "VERIFIED_PENDING_SUPPLY_MATCH") return "location";
   return "location";
 }
 
@@ -740,7 +742,7 @@ export function RiderApp() {
                         await api.kycStart(session!.token);
                         await api.kycPass(session!.token);
                         await refresh();
-                        setStep("location");
+                        setStep(nextFromStatus("VERIFIED_PENDING_SUPPLY_MATCH"));
                       })
                     }
                   >
@@ -756,6 +758,7 @@ export function RiderApp() {
               </div>
             </>
           ) : null}
+
 
           {step === "location" ? (
             <>
@@ -1516,11 +1519,54 @@ export function RiderApp() {
 
                 {supplyStatus?.pickup_verified_at || supplyStatus?.stage?.code === "completed" ? (
                   <div className="card stack" style={{ boxShadow: "none", background: "rgba(255,255,255,0.02)" }}>
-                    <div className="title" style={{ fontSize: 16 }}>See you soon</div>
-                    <div className="helper">Pickup has been verified. Your onboarding is complete.</div>
-                    <button className="btn btnDanger" onClick={signOut}>
-                      Sign out
-                    </button>
+                    <div className="title" style={{ fontSize: 16 }}>Pickup Verified!</div>
+                    <div className="helper">Your onboarding is complete. Please review and sign your contract below.</div>
+                    
+                    {supplyStatus?.contract_url ? (
+                      <ContractSigningSection
+                        contractUrl={supplyStatus.contract_url}
+                        signedContractUrl={supplyStatus.signed_contract_url || null}
+                        onSign={async (signature) => {
+                          if (!session?.token) return;
+                          try {
+                            await api.contractSign(session.token, signature);
+                            // Refresh supply status to get signed contract URL
+                            const s = await api.supplyStatus(session.token, trackingReqId || null);
+                            setSupplyStatus(s);
+                            setToast("Contract signed successfully!");
+                          } catch (e) {
+                            setToast(safeMsg(e));
+                          }
+                        }}
+                        onDownload={() => {
+                          const url = supplyStatus.signed_contract_url || supplyStatus.contract_url;
+                          if (url) {
+                            window.open(url, "_blank");
+                          }
+                        }}
+                        onSignOut={signOut}
+                      />
+                    ) : (
+                      <div className="helper" style={{ marginTop: 16 }}>
+                        Contract is being generated. Please wait a moment...
+                        <button
+                          className="btn"
+                          style={{ marginTop: "10px" }}
+                          onClick={async () => {
+                            if (session?.token) {
+                              try {
+                                const s = await api.supplyStatus(session.token, trackingReqId || null);
+                                setSupplyStatus(s);
+                              } catch (e) {
+                                setToast(safeMsg(e));
+                              }
+                            }
+                          }}
+                        >
+                          Refresh
+                        </button>
+                      </div>
+                    )}
                   </div>
                 ) : supplyStatus?.stage?.code === "approved" && !supplyStatus?.pickup_verified_at ? (
                   <button className="btn btnDanger" onClick={signOut}>
@@ -1592,6 +1638,127 @@ export function RiderApp() {
           ) : null}
         </div>
       </div>
+    </div>
+  );
+}
+
+// Contract Signing Component
+function ContractSigningSection({
+  contractUrl,
+  signedContractUrl,
+  onSign,
+  onDownload,
+  onSignOut,
+}: {
+  contractUrl: string;
+  signedContractUrl: string | null;
+  onSign: (signature: string) => Promise<void>;
+  onDownload: () => void;
+  onSignOut: () => void;
+}) {
+  const [showSignature, setShowSignature] = useState(false);
+  const [signature, setSignature] = useState<string>("");
+  const [signing, setSigning] = useState(false);
+
+  const isSigned = !!signedContractUrl;
+
+  return (
+    <div className="stack" style={{ marginTop: 24 }}>
+      <div className="title" style={{ fontSize: 18 }}>Your Rider Agreement</div>
+      
+      {/* Show signed contract if available, otherwise show original */}
+      <div style={{ width: "100%", height: "600px", border: "1px solid #ddd", borderRadius: "8px", overflow: "hidden", backgroundColor: "#fff" }}>
+        <object
+          data={signedContractUrl || contractUrl}
+          type="application/pdf"
+          style={{
+            width: "100%",
+            height: "100%",
+          }}
+          title="Rider Agreement Contract"
+        >
+          <div style={{ padding: "20px", textAlign: "center" }}>
+            <p>Your browser doesn't support PDF display.</p>
+            <a
+              href={signedContractUrl || contractUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="btn btnPrimary"
+              style={{ textDecoration: "none", display: "inline-block", marginTop: "10px" }}
+            >
+              Open Contract PDF
+            </a>
+          </div>
+        </object>
+      </div>
+
+      {!isSigned && !showSignature ? (
+        <div className="stack" style={{ marginTop: 16 }}>
+          <div className="helper">Please review the contract and sign below to proceed.</div>
+          <div className="row" style={{ gap: 12, justifyContent: "center" }}>
+            <button className="btn btnPrimary" onClick={() => setShowSignature(true)}>
+              Sign Contract
+            </button>
+            <a
+              href={contractUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="btn btnSecondary"
+              style={{ textDecoration: "none" }}
+            >
+              Download
+            </a>
+          </div>
+        </div>
+      ) : !isSigned && showSignature ? (
+        <div className="stack" style={{ marginTop: 16 }}>
+          <div className="title" style={{ fontSize: 16 }}>Sign Contract</div>
+          <div className="helper">Draw your signature below:</div>
+          <SignaturePad
+            onSignature={(sig) => setSignature(sig)}
+            onClear={() => setSignature("")}
+            width={400}
+            height={200}
+          />
+          <div className="row" style={{ gap: 12, justifyContent: "center", marginTop: 16 }}>
+            <button
+              className="btn btnPrimary"
+              disabled={!signature || signing}
+              onClick={async () => {
+                if (!signature) return;
+                setSigning(true);
+                try {
+                  await onSign(signature);
+                  setShowSignature(false);
+                } catch (e) {
+                  // Error handled by parent
+                } finally {
+                  setSigning(false);
+                }
+              }}
+            >
+              {signing ? "Signing..." : "Submit Signature"}
+            </button>
+            <button className="btn btnSecondary" onClick={() => setShowSignature(false)} disabled={signing}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="stack" style={{ marginTop: 16 }}>
+          <div className="helper" style={{ color: "#4caf50", fontWeight: "bold" }}>
+            ✓ Contract signed successfully!
+          </div>
+          <div className="row" style={{ gap: 12, justifyContent: "center" }}>
+            <button className="btn btnPrimary" onClick={onDownload}>
+              Download Signed Contract
+            </button>
+            <button className="btn btnDanger" onClick={onSignOut}>
+              Sign out
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

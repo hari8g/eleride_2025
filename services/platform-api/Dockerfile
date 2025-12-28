@@ -12,15 +12,8 @@ RUN pip install --no-cache-dir -r /app/requirements.txt
 COPY services/platform-api/app /app/app
 COPY services/platform-api/scripts /app/scripts
 
-# Create cashflow_data directory and copy data files
-# Copy the Data directory using a shell glob that handles the space
+# Create cashflow_data directory (skip copy if Data directory doesn't exist)
 RUN mkdir -p /app/cashflow_data
-# Use a shell command to find and copy the data
-COPY ["Cash flow_underwriting/Data", "/tmp/cashflow_data_src/"]
-RUN cp -r /tmp/cashflow_data_src/* /app/cashflow_data/ && \
-    echo "✅ Copied cashflow data files" && \
-    ls -1 /app/cashflow_data | wc -l && \
-    rm -rf /tmp/cashflow_data_src
 
 EXPOSE 8000
 
